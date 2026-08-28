@@ -25,21 +25,28 @@ public/                 manifest / service worker / 아이콘 (iOS '홈 화면�
 
 | 데이터 | 용도 |
 |--------|------|
-| 15098533 (TAGO) 버스위치정보 | 실시간 버스 위치 폴링 |
-| 15142030 버스노선 (경유정류소/배차) | 노선 검색 + Polyline 경로 + 정류장 좌표 |
+| [15098533](https://www.data.go.kr/data/15098533/openapi.do) (TAGO) 버스위치정보 `BusLcInfoInqireService` | 실시간 버스 위치 폴링 |
+| [15098529](https://www.data.go.kr/data/15098529/openapi.do) (TAGO) 버스노선정보 `BusRouteInfoInqireService` | 노선 검색(`getRouteNoList`) + Polyline 경로 · 정류장 좌표(`getRouteAcctoThrghSttnList`) |
 
-15096280(정류소정보)·15157601(초정밀 위치)은 미사용 — 정류장 좌표가 노선조회에 포함되고,
-초정밀 API는 5,000콜/일 제한이라 즐겨찾기가 1~2개일 때 선택적으로만 붙일 것.
+**두 API 모두 같은 인증키로 각각 "활용신청"** 해야 함(자동승인). 하나만 신청하면 다른 쪽은
+`SERVICE_KEY_IS_NOT_REGISTERED_ERROR(30)` 로 실패한다.
 
-> `api/*.py`의 엔드포인트 경로·파라미터명은 발급받은 API 문서 기준으로 최종 확인하세요.
+원 기획서의 15142030(버스노선)은 노선ID·번호 등 기초 정적자료 위주라 실시간용으로 부적합해
+같은 1613000 네임스페이스의 15098529 로 대체함. 15096280(정류소정보)·15157601(초정밀 위치)은
+미사용 — 정류장 좌표가 노선조회에 포함되고, 초정밀 API는 5,000콜/일 제한이 있음.
 
 ## 로컬 실행
 
 ```bash
 npm install
 cp .env.example .env      # DATA_GO_KR_KEY, VITE_KAKAO_KEY 채우기
-npm run dev               # 프론트만. /api 까지 함께 띄우려면: npx vercel dev
+
+python api/_local.py      # 터미널 1: /api 서버 (:8000). .env 자동 로드
+npm run dev               # 터미널 2: 프론트 (:5173). /api 는 :8000 으로 프록시
 ```
+
+- 카카오 개발자 콘솔 Web 플랫폼 사이트 도메인에 `http://localhost:5173` 등록 필요.
+- `vercel dev` 는 Vercel 로그인이 필요하므로 로컬은 위 2-프로세스 방식을 사용.
 
 `busPath.js` 자체 검증: `node src/map/busPath.test.mjs`
 

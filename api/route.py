@@ -1,7 +1,7 @@
 from http.server import BaseHTTPRequestHandler
 from urllib.parse import parse_qs, urlparse
 
-from _util import build_url, cached_get, items, send
+from _util import UpstreamError, build_url, cached_get, items, send
 
 # 국토교통부(TAGO) 버스노선정보 서비스
 # ※ 엔드포인트/파라미터명은 발급받은 API 문서 기준으로 최종 확인할 것.
@@ -10,6 +10,12 @@ SVC = "http://apis.data.go.kr/1613000/BusRouteInfoInqireService"
 
 class handler(BaseHTTPRequestHandler):
     def do_GET(self):
+        try:
+            self._handle()
+        except UpstreamError as e:
+            send(self, {"error": "upstream", "detail": str(e)}, ttl=0, status=502)
+
+    def _handle(self):
         q = parse_qs(urlparse(self.path).query)
         city = q.get("cityCode", ["25"])[0]
         route_no = q.get("routeNo", [""])[0]
