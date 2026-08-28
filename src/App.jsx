@@ -103,8 +103,7 @@ export default function App() {
           <input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="버스 번호 검색"
-            inputMode="numeric"
+            placeholder="버스 번호 검색 (예: 273, 마포06)"
           />
           <button type="submit" disabled={searching}>
             {searching ? '…' : '검색'}
