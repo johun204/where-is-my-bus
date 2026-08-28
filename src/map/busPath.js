@@ -20,15 +20,32 @@ export function buildPath(coords) {
   return { pts, cum, total: cum[cum.length - 1] || 0 };
 }
 
-/** target(위경도)을 경로에 투영 → { dist: 경로와의 거리(m), along: 경로상 누적거리(m) } */
-export function projectOnPath({ pts, cum }, target) {
-  let best = { dist: Infinity, along: 0 };
-  for (let i = 0; i < pts.length - 1; i++) {
-    const { t, p } = closestOnSeg(pts[i], pts[i + 1], target);
-    const d = haversine(p, target);
-    if (d < best.dist) best = { dist: d, along: cum[i] + t * (cum[i + 1] - cum[i]) };
+const HINT_WINDOW_M = 800; // hintAlong 주변 이 범위를 우선 탐색
+const HINT_ACCEPT_M = 80; // 그 범위 안에서 경로와 이만큼 이내면 채택
+
+/**
+ * target(위경도)을 경로에 투영 → { dist: 경로와의 거리(m), along: 경로상 누적거리(m) }.
+ *
+ * hintAlong 이 주어지면 그 주변 구간을 먼저 본다. 왕복이 같은 도로를 공유하는 노선에서
+ * GPS 노이즈로 반대방향 구간에 투영돼 진행방향이 뒤집히는 것을 막기 위함.
+ */
+export function projectOnPath({ pts, cum }, target, hintAlong = null) {
+  const scan = (lo, hi) => {
+    let best = { dist: Infinity, along: 0 };
+    for (let i = 0; i < pts.length - 1; i++) {
+      if (cum[i + 1] < lo || cum[i] > hi) continue;
+      const { t, p } = closestOnSeg(pts[i], pts[i + 1], target);
+      const d = haversine(p, target);
+      if (d < best.dist) best = { dist: d, along: cum[i] + t * (cum[i + 1] - cum[i]) };
+    }
+    return best;
+  };
+
+  if (hintAlong != null) {
+    const near = scan(hintAlong - HINT_WINDOW_M, hintAlong + HINT_WINDOW_M);
+    if (near.dist < HINT_ACCEPT_M) return near; // 연속성 유지 (같은 방향 차선에 고정)
   }
-  return best;
+  return scan(-Infinity, Infinity); // 힌트 없음 / 창 안에 마땅한 구간 없음 → 전체 탐색
 }
 
 /** 경로상 누적거리 along(m) → { lat, lng, heading(도) } */

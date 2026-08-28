@@ -92,8 +92,14 @@ export function useBusMarkers(map, route) {
 
       for (const b of fresh) {
         seen.add(b.vehicleNo);
-        const proj = projectOnPath(path, b);
-        let st = buses.get(b.vehicleNo);
+        const st = buses.get(b.vehicleNo);
+        // 왕복 공유구간 대비: 이전 위치(없으면 API sectOrd)로 투영 방향을 고정
+        let hint = st ? st.refAlong : null;
+        if (hint == null && Number.isFinite(b.sectOrd)) {
+          const idx = Math.max(0, Math.min(path.cum.length - 1, b.sectOrd - 1));
+          hint = path.cum[idx];
+        }
+        const proj = projectOnPath(path, b, hint);
 
         if (!st) {
           const p0 = pointAtDistance(path, proj.along);

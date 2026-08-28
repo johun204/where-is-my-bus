@@ -31,4 +31,20 @@ assert.ok(Math.abs(mid.heading - 90) < 1, `mid heading: ${mid.heading}`);
 // 범위 밖 along 은 끝점으로 clamp
 assert.ok(Math.abs(pointAtDistance(path, 1e9).lng - 126.997) < 1e-4, 'clamp end');
 
+// 왕복이 같은 도로를 공유하는 노선: 동쪽으로 갔다가 (약 5m 북쪽 차선으로) 되돌아옴
+const loop = buildPath([
+  [0, 0],
+  [0.05, 0], // 동쪽 끝 (~5.5km)
+  [0.05, 0.00005],
+  [0, 0.00005], // 되돌아옴 (반대방향)
+]);
+const half = loop.cum[1]; // 반환점까지 거리
+// 되돌아오는 차선 쪽에 더 가까운 노이즈 지점
+const amb = { lat: 0.00004, lng: 0.025 };
+// 힌트 없으면 더 가까운 '복귀' 구간으로 투영됨 (along > 반환점)
+assert.ok(projectOnPath(loop, amb).along > half, 'no hint → picks return leg');
+// 힌트(가는 방향 위치)를 주면 '가는' 구간에 고정
+const hinted = projectOnPath(loop, amb, half / 2);
+assert.ok(hinted.along < half, `hint → stays on outbound leg: ${hinted.along}`);
+
 console.log('busPath.js OK');
