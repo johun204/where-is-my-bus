@@ -14,7 +14,7 @@ export function drawRoute(map, route) {
 
   const polyline = new kakao.maps.Polyline({
     path: path.map(([lng, lat]) => new kakao.maps.LatLng(lat, lng)),
-    strokeWeight: 5,
+    strokeWeight: 4,
     strokeColor: color,
     strokeOpacity: 0.85,
   });

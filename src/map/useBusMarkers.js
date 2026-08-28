@@ -58,7 +58,8 @@ export function useBusMarkers(map, route) {
         st.along += (predicted - st.along) * k;
         const p = pointAtDistance(path, st.along);
         st.overlay.setPosition(new kakao.maps.LatLng(p.lat, p.lng));
-        st.overlay.setHeading(p.heading - 90); // SVG 버스가 '위' 기준 → -90 보정
+        // 경로 접선 방위 = 진행방향. 속도 0이어도 항상 세팅되므로 멈춰 있어도 방향 표시됨
+        st.overlay.setHeading(p.heading);
       }
       raf = requestAnimationFrame(frame);
     }
