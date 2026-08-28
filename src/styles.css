@@ -1,0 +1,29 @@
+* { box-sizing: border-box; }
+html, body, #root { margin: 0; height: 100%; }
+body { font-family: system-ui, -apple-system, "Apple SD Gothic Neo", sans-serif; }
+
+.app { position: relative; height: 100%; }
+.map { position: absolute; inset: 0; }
+
+.panel {
+  position: absolute;
+  top: env(safe-area-inset-top, 12px);
+  left: 12px;
+  width: 260px;
+  max-height: 80vh;
+  overflow-y: auto;
+  padding: 12px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.95);
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.15);
+  z-index: 10;
+}
+
+.panel form { display: flex; gap: 6px; }
+.panel input { flex: 1; min-width: 0; padding: 8px; border: 1px solid #ccc; border-radius: 8px; }
+.panel button { padding: 8px 10px; border: 0; border-radius: 8px; background: #3d5bab; color: #fff; }
+
+.panel h3 { margin: 14px 0 6px; font-size: 14px; color: #555; }
+.list { list-style: none; margin: 0; padding: 0; }
+.list li { display: flex; align-items: center; justify-content: space-between; padding: 6px 4px; border-bottom: 1px solid #eee; }
+.list li button { background: transparent; color: #f7b32b; font-size: 18px; padding: 0 6px; }

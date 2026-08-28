@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>버스맵</title>
+
+    <!-- PWA / iOS 홈화면에 추가 -->
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <meta name="theme-color" content="#3D5BAB" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="버스맵" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+
+    <script src="//dapi.kakao.com/v2/maps/sdk.js?appkey=%VITE_KAKAO_KEY%&autoload=false"></script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.jsx"></script>
+    <script>
+      if ('serviceWorker' in navigator)
+        navigator.serviceWorker.register('/sw.js');
+    </script>
+  </body>
+</html>
