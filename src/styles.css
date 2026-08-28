@@ -177,12 +177,19 @@ body {
   box-shadow: 0 0 0 2px rgba(26, 115, 232, 0.33), 0 1px 4px rgba(0, 0, 0, 0.4);
 }
 
-/* 버스 마커 (useBusMarkers 가 scale/rotate 조정) */
+/* 버스 마커 — Kakao 는 0×0 .bus-anchor 만 좌표에 고정, 보이는 부분은 그 위에 얹음 */
+.bus-anchor {
+  position: absolute;
+  width: 0;
+  height: 0;
+}
 .bus-ovl {
-  position: relative;
+  position: absolute;
+  left: 0;
+  top: 0;
   width: 30px;
   height: 30px;
-  transform-origin: 50% 50%;
+  transform-origin: 50% 50%; /* transform = translate(-50%,-50%) scale(k) → 중심이 앵커에 고정 */
   will-change: transform;
 }
 .bus-ovl__no {

@@ -8,18 +8,27 @@ const busSvg = (color) => `
   </g>
 </svg>`;
 
+const innerTransform = (k) => `translate(-50%, -50%) scale(${k})`;
+
 /**
- * 버스 마커: 노선색 방향표시 아이콘 + 상단 노선번호 라벨.
+ * 버스 마커.
+ * Kakao 에는 0×0 앵커 div 만 넘겨서 좌표에 그 점을 고정하고(축척과 무관),
+ * 실제 보이는 부분은 그 위에서 translate(-50%,-50%) 로 중심을 맞춘 뒤 scale 한다.
+ * → 지도를 축소해도 아이콘 중심이 항상 노선 라인 위에 위치.
+ *
  *  setPosition(latlng)  위치 이동
- *  setHeading(deg)      진행방향으로 아이콘만 회전 (멈춰 있어도 항상 방향 표시)
+ *  setHeading(deg)      진행방향으로 아이콘만 회전 (멈춰 있어도 항상 표시)
  *  setScale(k)          지도 축척에 맞춰 아이콘·번호 함께 확대축소
  */
 export function createBusOverlay(map, latlng, color, routeNo, scale = 1) {
   const { kakao } = window;
 
-  const wrap = document.createElement('div');
-  wrap.className = 'bus-ovl';
-  wrap.style.transform = `scale(${scale})`;
+  const anchor = document.createElement('div');
+  anchor.className = 'bus-anchor';
+
+  const inner = document.createElement('div');
+  inner.className = 'bus-ovl';
+  inner.style.transform = innerTransform(scale);
 
   const label = document.createElement('div');
   label.className = 'bus-ovl__no';
@@ -29,14 +38,15 @@ export function createBusOverlay(map, latlng, color, routeNo, scale = 1) {
   icon.className = 'bus-ovl__icon';
   icon.innerHTML = busSvg(color);
 
-  wrap.append(label, icon);
+  inner.append(label, icon);
+  anchor.append(inner);
 
   const overlay = new kakao.maps.CustomOverlay({
     map,
     position: latlng,
-    content: wrap,
-    xAnchor: 0.5,
-    yAnchor: 0.5,
+    content: anchor,
+    xAnchor: 0,
+    yAnchor: 0,
     zIndex: 5,
   });
 
@@ -46,7 +56,7 @@ export function createBusOverlay(map, latlng, color, routeNo, scale = 1) {
       icon.style.transform = `rotate(${deg}deg)`;
     },
     setScale: (k) => {
-      wrap.style.transform = `scale(${k})`;
+      inner.style.transform = innerTransform(k);
     },
     remove: () => overlay.setMap(null),
   };
