@@ -26,7 +26,10 @@ export function RouteLayer({ map, route }) {
     return drawRoute(map, detail); // 언마운트 시 정리
   }, [map, detail]);
 
-  useBusMarkers(map, detail && { ...detail, routeId: route.routeId });
+  useBusMarkers(
+    map,
+    detail && { ...detail, routeId: route.routeId, routeNo: route.routeNo },
+  );
 
   return null;
 }

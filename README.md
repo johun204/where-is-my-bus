@@ -14,14 +14,15 @@ api/                    Vercel Python Serverless (서울시 버스 API 프록시
   bus-position.py       GET /api/bus-position?routeId=<busRouteId>     (실시간 위치, getBusPosByRtid)
   route.py              GET /api/route?routeNo=  또는  ?routeId=       (노선검색 getBusRouteList / 경유정류소 getStaionByRoute)
 src/
+  App.jsx                      모바일 UI(상단 검색바 / 즐겨찾기 칩 / 현위치 FAB), 첫 진입 현위치 이동, PWA 설치버튼
   hooks/useFavoriteRoutes.js   즐겨찾기 노선 localStorage 영속화
   map/routeColor.js            노선유형 → 색상 (간선 파랑 / 지선 초록 / 광역 빨강 / 순환 노랑)
   map/busPath.js               경로 투영 + 경로를 따라가는 보간 계산
-  map/busOverlay.js            색상 입힌 버스 마커(inline SVG CustomOverlay)
+  map/busOverlay.js            버스 마커(노선색 SVG + 상단 노선번호), setScale로 축척 연동
   map/drawRoute.js             Polyline + 정류장 점마커
-  map/useBusMarkers.js         15초 폴링 + 경로상 평균속도 추측항법(대기 중 계속 전진, 응답 시 보정·속도 재계산)
+  map/useBusMarkers.js         15초 폴링 + 최근 5회 fetch 평균속도 추측항법(대기 중 전진, 응답 시 보정·재계산) + 줌 연동 스케일
   map/RouteLayer.jsx           노선 1개 = 경로 + 정류장 + 버스
-public/                 manifest / service worker / 아이콘 (iOS '홈 화면에 추가' 지원)
+public/                 manifest(standalone·maskable) / service worker(HTML 네트워크 우선) / 아이콘
 ```
 
 ## 사용하는 공공데이터포털 API
