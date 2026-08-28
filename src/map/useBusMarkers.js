@@ -5,7 +5,7 @@ import { routeTypeColor } from './routeColor';
 
 const POLL_MS = 12000; // 실시간 위치 폴링 주기
 const WINDOW = 3; // 평균속도를 낼 때 쓰는 최근 fetch 개수 (짧을수록 최근 움직임에 민감)
-const SNAP_M = 250; // 경로에서 이만큼 벗어난 좌표는 보정 없이 스냅
+const SNAP_M = 120; // 경로에서 이만큼 벗어난 좌표는 보정 없이 스냅 (도로 형상 기준)
 const JUMP_M = 3000; // 경로상 이만큼 튀면(순환노선 한 바퀴 등) 스냅
 const MAX_SPEED = 18; // m/s (~65km/h) 평균속도 상한
 const SMOOTH_TAU = 1.0; // s. 화면 위치가 예측 위치로 수렴하는 시간상수
@@ -93,11 +93,11 @@ export function useBusMarkers(map, route) {
       for (const b of fresh) {
         seen.add(b.vehicleNo);
         const st = buses.get(b.vehicleNo);
-        // 왕복 공유구간 대비: 이전 위치(없으면 API sectOrd)로 투영 방향을 고정
+        // 왕복 공유구간 대비: 이전 위치(없으면 API sectOrd 비율)로 투영 방향을 고정
         let hint = st ? st.refAlong : null;
-        if (hint == null && Number.isFinite(b.sectOrd)) {
-          const idx = Math.max(0, Math.min(path.cum.length - 1, b.sectOrd - 1));
-          hint = path.cum[idx];
+        if (hint == null && Number.isFinite(b.sectOrd) && route.stops?.length > 1) {
+          const frac = Math.max(0, Math.min(1, b.sectOrd / route.stops.length));
+          hint = path.total * frac; // path 는 도로 형상(정류장 수와 점 개수가 다름)
         }
         const proj = projectOnPath(path, b, hint);
 

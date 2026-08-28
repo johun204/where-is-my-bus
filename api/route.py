@@ -38,8 +38,8 @@ class handler(BaseHTTPRequestHandler):
             ]
             return send(self, {"results": results}, ttl=600)
 
-        if route_id:  # 경유정류소 목록 = Polyline 경로 + 정류장 점마커
-            items = fetch(
+        if route_id:  # 정류장 점마커(getStaionByRoute) + 도로 형상 Polyline(getRoutePath)
+            stop_items = fetch(
                 "busRouteInfo/getStaionByRoute", {"busRouteId": route_id}, ttl=86400
             )
             stops = sorted(
@@ -51,20 +51,33 @@ class handler(BaseHTTPRequestHandler):
                         "lat": float(it["gpsY"]),
                         "lng": float(it["gpsX"]),
                     }
-                    for it in items
+                    for it in stop_items
                     if it.get("gpsX") not in (None, "", "0")
                     and it.get("gpsY") not in (None, "", "0")
                     and it.get("seq")
                 ),
                 key=lambda s: s["ord"],
             )
+
+            # 도로를 따라가는 실제 노선 형상. 실패하면 정류장 잇기로 폴백.
+            try:
+                shape = fetch(
+                    "busRouteInfo/getRoutePath", {"busRouteId": route_id}, ttl=86400
+                )
+                path = [
+                    [float(it["gpsX"]), float(it["gpsY"])]
+                    for it in sorted(shape, key=lambda it: int(it.get("no") or 0))
+                    if it.get("gpsX") not in (None, "", "0")
+                    and it.get("gpsY") not in (None, "", "0")
+                ]
+            except UpstreamError:
+                path = []
+            if not path:
+                path = [[s["lng"], s["lat"]] for s in stops]
+
             return send(
                 self,
-                {
-                    "routeId": route_id,
-                    "stops": stops,
-                    "path": [[s["lng"], s["lat"]] for s in stops],  # [lng, lat]
-                },
+                {"routeId": route_id, "stops": stops, "path": path},  # path: [lng, lat]
                 ttl=86400,
             )
 

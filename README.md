@@ -12,7 +12,7 @@ Vercel(React + Python Serverless Functions) + 카카오맵, DB 없이 localStora
 api/                    Vercel Python Serverless (서울시 버스 API 프록시 + 10초 캐시)
   _util.py              공통: ws.bus.go.kr 호출 + XML 파싱 + 캐시 + 응답 헬퍼
   bus-position.py       GET /api/bus-position?routeId=<busRouteId>     (실시간 위치, getBusPosByRtid)
-  route.py              GET /api/route?routeNo=  또는  ?routeId=       (노선검색 getBusRouteList / 경유정류소 getStaionByRoute)
+  route.py              GET /api/route?routeNo=  또는  ?routeId=       (검색 getBusRouteList / 정류장 getStaionByRoute + 도로형상 getRoutePath)
 src/
   App.jsx                      모바일 UI(상단 검색바 / 즐겨찾기 칩 / 현위치 FAB), 첫 진입 현위치 이동, PWA 설치버튼
   hooks/useFavoriteRoutes.js   즐겨찾기 노선 localStorage 영속화
