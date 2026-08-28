@@ -1,6 +1,9 @@
+import os
+import sys
 from http.server import BaseHTTPRequestHandler
 from urllib.parse import parse_qs, urlparse
 
+sys.path.insert(0, os.path.dirname(__file__))  # Vercel은 함수 디렉터리를 sys.path에 안 넣음
 from _util import UpstreamError, fetch, send
 
 
