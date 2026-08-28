@@ -25,4 +25,9 @@ for bad in (ERR_XML, '{"error":"Unauthorized","message":"등록되지 않은 서
     except _util.UpstreamError:
         pass
 
+# headerCd=4 / "결과가 없습니다" 는 에러가 아니라 빈 목록
+NO_RESULT = ("<ServiceResult><msgHeader><headerCd>4</headerCd>"
+             "<headerMsg>결과가 없습니다.</headerMsg></msgHeader></ServiceResult>")
+assert _util._parse(NO_RESULT) == [], "headerCd=4 → []"
+
 print("_util._parse OK")

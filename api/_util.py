@@ -71,7 +71,10 @@ def _parse(body: str) -> list:
 
     cd = find("headerCd")
     if cd not in (None, "0"):
-        raise UpstreamError(find("headerMsg") or f"headerCd={cd}")
+        msg = find("headerMsg") or ""
+        if cd == "4" or "결과가 없" in msg:  # 조건에 맞는 데이터 없음 = 정상 빈 응답
+            return []
+        raise UpstreamError(msg or f"headerCd={cd}")
     rc = find("returnReasonCode")
     if rc not in (None, "00"):
         raise UpstreamError(find("returnAuthMsg") or f"reasonCode={rc}")
