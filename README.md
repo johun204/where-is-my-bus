@@ -1,4 +1,4 @@
-# where-is-my-bus
+# where-is-my-bus — 내 버스는 어디쯤?
 
 서울시 버스 노선·정류장·실시간 위치를 지도에 시각화하는 PWA.
 Vercel(React + Python Serverless Functions) + 카카오맵, DB 없이 localStorage.

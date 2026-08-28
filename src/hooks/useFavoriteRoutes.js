@@ -45,9 +45,18 @@ export function useFavoriteRoutes() {
     );
   }, []);
 
+  // 지도에서만 껐다 켜기 (목록에는 남김). enabled 없으면 켜진 것으로 간주.
+  const toggleEnabled = useCallback((routeId) => {
+    setFavorites((prev) =>
+      prev.map((r) =>
+        r.routeId === routeId ? { ...r, enabled: r.enabled === false } : r,
+      ),
+    );
+  }, []);
+
   const remove = useCallback((routeId) => {
     setFavorites((prev) => prev.filter((r) => r.routeId !== routeId));
   }, []);
 
-  return { favorites, has, toggle, remove };
+  return { favorites, has, toggle, toggleEnabled, remove };
 }

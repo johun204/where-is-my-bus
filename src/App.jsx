@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { ErrorBoundary } from './ErrorBoundary';
 import { useFavoriteRoutes } from './hooks/useFavoriteRoutes';
 import { RouteLayer } from './map/RouteLayer';
 import { routeTypeColor } from './map/routeColor';
@@ -14,7 +15,7 @@ export default function App() {
   const [searching, setSearching] = useState(false);
   const [installEvt, setInstallEvt] = useState(null);
   const myRef = useRef(null); // 현위치 오버레이
-  const { favorites, has, toggle } = useFavoriteRoutes();
+  const { favorites, has, toggle, toggleEnabled } = useFavoriteRoutes();
 
   useEffect(() => {
     window.kakao.maps.load(() => {
@@ -81,7 +82,10 @@ export default function App() {
     setSearching(true);
     try {
       const r = await fetch(`/api/route?routeNo=${encodeURIComponent(q)}`);
-      setResults((await r.json()).results ?? []);
+      const d = await r.json();
+      setResults(Array.isArray(d.results) ? d.results : []);
+    } catch {
+      setResults([]);
     } finally {
       setSearching(false);
     }
@@ -133,18 +137,28 @@ export default function App() {
 
         {favorites.length > 0 && (
           <div className="faves">
-            {favorites.map((r) => (
-              <span
-                key={r.routeId}
-                className="chip"
-                style={{ borderColor: routeTypeColor(r.routeTp) }}
-              >
-                {r.routeNo}
-                <button onClick={() => toggle(r)} aria-label="삭제">
-                  ×
-                </button>
-              </span>
-            ))}
+            {favorites.map((r) => {
+              const off = r.enabled === false;
+              return (
+                <span
+                  key={r.routeId}
+                  className={`chip${off ? ' chip--off' : ''}`}
+                  style={{ borderColor: off ? '#c2c2c2' : routeTypeColor(r.routeTp) }}
+                >
+                  <button
+                    className="chip__no"
+                    onClick={() => toggleEnabled(r.routeId)}
+                    aria-pressed={!off}
+                    title={off ? '지도에 표시' : '지도에서 숨기기'}
+                  >
+                    {r.routeNo}
+                  </button>
+                  <button className="chip__x" onClick={() => toggle(r)} aria-label="삭제">
+                    ×
+                  </button>
+                </span>
+              );
+            })}
           </div>
         )}
       </div>
@@ -153,7 +167,14 @@ export default function App() {
         ◎
       </button>
 
-      {map && favorites.map((r) => <RouteLayer key={r.routeId} map={map} route={r} />)}
+      {map &&
+        favorites
+          .filter((r) => r.enabled !== false)
+          .map((r) => (
+            <ErrorBoundary key={r.routeId} fallback={null}>
+              <RouteLayer map={map} route={r} />
+            </ErrorBoundary>
+          ))}
     </div>
   );
 }

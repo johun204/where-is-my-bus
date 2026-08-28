@@ -1,7 +1,7 @@
 {
   "id": "/",
-  "name": "버스맵",
-  "short_name": "버스맵",
+  "name": "내 버스는 어디쯤?",
+  "short_name": "내버스어디쯤",
   "description": "서울 버스 노선과 실시간 위치 지도",
   "lang": "ko",
   "start_url": "/",

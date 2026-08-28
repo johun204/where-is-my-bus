@@ -6,17 +6,21 @@ import { routeTypeColor } from './routeColor';
  */
 export function drawRoute(map, route) {
   const { kakao } = window;
+  const path = Array.isArray(route?.path) ? route.path : [];
+  const stops = Array.isArray(route?.stops) ? route.stops : [];
+  if (!path.length) return () => {};
+
   const color = routeTypeColor(route.routeTp);
 
   const polyline = new kakao.maps.Polyline({
-    path: route.path.map(([lng, lat]) => new kakao.maps.LatLng(lat, lng)),
+    path: path.map(([lng, lat]) => new kakao.maps.LatLng(lat, lng)),
     strokeWeight: 5,
     strokeColor: color,
     strokeOpacity: 0.85,
   });
   polyline.setMap(map);
 
-  const dots = route.stops.map((s) => {
+  const dots = stops.map((s) => {
     const el = document.createElement('div');
     el.style.cssText =
       `width:8px;height:8px;border-radius:50%;background:${color};` +
