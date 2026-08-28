@@ -3,8 +3,8 @@ import { createBusOverlay } from './busOverlay';
 import { buildPath, pointAtDistance, projectOnPath } from './busPath';
 import { routeTypeColor } from './routeColor';
 
-const POLL_MS = 15000; // 실시간 위치 폴링 주기
-const WINDOW = 5; // 평균속도를 낼 때 쓰는 최근 fetch 개수
+const POLL_MS = 12000; // 실시간 위치 폴링 주기
+const WINDOW = 3; // 평균속도를 낼 때 쓰는 최근 fetch 개수 (짧을수록 최근 움직임에 민감)
 const SNAP_M = 250; // 경로에서 이만큼 벗어난 좌표는 보정 없이 스냅
 const JUMP_M = 3000; // 경로상 이만큼 튀면(순환노선 한 바퀴 등) 스냅
 const MAX_SPEED = 18; // m/s (~65km/h) 평균속도 상한
