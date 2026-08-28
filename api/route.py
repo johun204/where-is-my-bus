@@ -1,11 +1,7 @@
 from http.server import BaseHTTPRequestHandler
 from urllib.parse import parse_qs, urlparse
 
-from _util import UpstreamError, build_url, cached_get, items, send
-
-# 국토교통부(TAGO) 버스노선정보 서비스
-# ※ 엔드포인트/파라미터명은 발급받은 API 문서 기준으로 최종 확인할 것.
-SVC = "http://apis.data.go.kr/1613000/BusRouteInfoInqireService"
+from _util import UpstreamError, fetch, send
 
 
 class handler(BaseHTTPRequestHandler):
@@ -17,41 +13,43 @@ class handler(BaseHTTPRequestHandler):
 
     def _handle(self):
         q = parse_qs(urlparse(self.path).query)
-        city = q.get("cityCode", ["25"])[0]
         route_no = q.get("routeNo", [""])[0]
         route_id = q.get("routeId", [""])[0]
 
-        if route_no:  # 노선 번호 검색
-            url = build_url(
-                SVC + "/getRouteNoList",
-                {"cityCode": city, "routeNo": route_no, "numOfRows": 50},
+        if route_no:  # 노선 번호/명 검색
+            items = fetch(
+                "busRouteInfo/getBusRouteList", {"strSrch": route_no}, ttl=600
             )
             results = [
                 {
-                    "routeId": it["routeid"],
-                    "routeNo": it["routeno"],
-                    "routeTp": it.get("routetp"),
-                    "cityCode": city,
+                    "routeId": it["busRouteId"],
+                    "routeNo": it["busRouteNm"],
+                    "routeTp": it.get("routeType"),
+                    "start": it.get("stStationNm"),
+                    "end": it.get("edStationNm"),
                 }
-                for it in items(cached_get(url, ttl=600))
+                for it in items
+                if it.get("busRouteId")
             ]
             return send(self, {"results": results}, ttl=600)
 
         if route_id:  # 경유정류소 목록 = Polyline 경로 + 정류장 점마커
-            url = build_url(
-                SVC + "/getRouteAcctoThrghSttnList",
-                {"cityCode": city, "routeId": route_id, "numOfRows": 500},
+            items = fetch(
+                "busRouteInfo/getStaionByRoute", {"busRouteId": route_id}, ttl=86400
             )
             stops = sorted(
                 (
                     {
-                        "ord": int(it["nodeord"]),
-                        "name": it.get("nodenm"),
-                        "lat": float(it["gpslati"]),
-                        "lng": float(it["gpslong"]),
+                        "ord": int(it["seq"]),
+                        "name": it.get("stationNm"),
+                        "arsId": it.get("arsId"),
+                        "lat": float(it["gpsY"]),
+                        "lng": float(it["gpsX"]),
                     }
-                    for it in items(cached_get(url, ttl=86400))
-                    if it.get("gpslati") and it.get("gpslong")
+                    for it in items
+                    if it.get("gpsX") not in (None, "", "0")
+                    and it.get("gpsY") not in (None, "", "0")
+                    and it.get("seq")
                 ),
                 key=lambda s: s["ord"],
             )

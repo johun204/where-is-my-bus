@@ -4,50 +4,92 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import xml.etree.ElementTree as ET
+
+# 서울시 버스운행정보(TOPIS) 공유서비스. 공공데이터포털에서 아래 두 서비스를 각각 활용신청:
+#   - 서울특별시_버스위치정보조회 서비스 (buspos/*)
+#   - 서울특별시_노선정보조회 서비스   (busRouteInfo/*)
+BASE = "http://ws.bus.go.kr/api/rest"
 
 # ponytail: 람다 프로세스 메모리 캐시. 콜드스타트 시 비워짐 →
 #           응답의 s-maxage 헤더로 Vercel CDN 캐시를 병행해 중복 호출을 한 번 더 막는다.
-_cache: "dict[str, tuple[float, dict]]" = {}
+_cache: "dict[str, tuple[float, list]]" = {}
 
 
 class UpstreamError(Exception):
-    """공공데이터포털 호출 실패 (인증키 오류, 트래픽 초과, 응답 형식 이상 등)."""
+    """서울시 버스 API 호출 실패 (인증키 미등록, 트래픽 초과, 응답 형식 이상 등)."""
 
 
-def build_url(base: str, params: dict) -> str:
-    # unquote → quote 로 정확히 한 번만 인코딩. .env 에 Encoding/Decoding 키 어느 쪽이 와도 동작.
-    key = urllib.parse.quote(urllib.parse.unquote(os.environ["DATA_GO_KR_KEY"]), safe="")
-    qs = urllib.parse.urlencode({**params, "_type": "json"})
-    return f"{base}?{qs}&serviceKey={key}"
+def fetch(path: str, params: dict, ttl: int = 10) -> list:
+    """ws.bus.go.kr REST 호출 → <itemList> 목록을 dict 리스트로. ttl 이내 재요청은 캐시."""
+    key = urllib.parse.unquote(os.environ["DATA_GO_KR_KEY"])  # Encoding/Decoding 키 모두 허용
+    qs = urllib.parse.urlencode({**params, "serviceKey": key})
+    url = f"{BASE}/{path}?{qs}"
 
-
-def cached_get(url: str, ttl: int = 10) -> dict:
     now = time.time()
     hit = _cache.get(url)
-    if hit and hit[0] > now:  # ttl(기본 10초) 이내 재요청 → API 호출 없이 캐시 반환
+    if hit and hit[0] > now:
         return hit[1]
+
     try:
         with urllib.request.urlopen(url, timeout=8) as r:
-            data = json.loads(r.read().decode("utf-8"))
-    except (urllib.error.URLError, TimeoutError, ValueError) as e:
+            body = r.read().decode("utf-8", "replace")
+    except urllib.error.HTTPError as e:
+        detail = ""
+        try:
+            detail = e.read().decode("utf-8", "replace")[:300]
+        except Exception:
+            pass
+        raise UpstreamError(f"HTTP {e.code}: {detail or e.reason}") from e
+    except (urllib.error.URLError, TimeoutError) as e:
         raise UpstreamError(str(e)) from e
-    _cache[url] = (now + ttl, data)
-    return data
+
+    items = _parse(body)
+    _cache[url] = (now + ttl, items)
+    return items
 
 
-def items(raw: dict) -> list:
+def _parse(body: str) -> list:
+    text = body.lstrip()
+    if text.startswith("{"):  # 미등록 키 등은 JSON 에러로 옴
+        try:
+            j = json.loads(text)
+        except ValueError:
+            raise UpstreamError(text[:200])
+        raise UpstreamError(j.get("message") or j.get("msg") or text[:200])
+
     try:
-        node = raw["response"]["body"]["items"]["item"]
-    except (KeyError, TypeError):
-        return []
-    return node if isinstance(node, list) else [node]
+        root = ET.fromstring(body)
+    except ET.ParseError as e:
+        raise UpstreamError(f"XML parse: {e}; body={text[:200]}")
+
+    def find(name):  # 네임스페이스 무시
+        for el in root.iter():
+            if el.tag.rsplit("}", 1)[-1] == name:
+                return el.text
+        return None
+
+    cd = find("headerCd")
+    if cd not in (None, "0"):
+        raise UpstreamError(find("headerMsg") or f"headerCd={cd}")
+    rc = find("returnReasonCode")
+    if rc not in (None, "00"):
+        raise UpstreamError(find("returnAuthMsg") or f"reasonCode={rc}")
+
+    items = []
+    for el in root.iter():
+        if el.tag.rsplit("}", 1)[-1] == "itemList":
+            items.append(
+                {c.tag.rsplit("}", 1)[-1]: (c.text or "") for c in el}
+            )
+    return items
 
 
 def send(handler, payload: dict, ttl: int = 10, status: int = 200) -> None:
-    body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    out = json.dumps(payload, ensure_ascii=False).encode("utf-8")
     handler.send_response(status)
     handler.send_header("Content-Type", "application/json; charset=utf-8")
     handler.send_header("Cache-Control", f"s-maxage={ttl}, stale-while-revalidate=30")
     handler.send_header("Access-Control-Allow-Origin", "*")
     handler.end_headers()
-    handler.wfile.write(body)
+    handler.wfile.write(out)
