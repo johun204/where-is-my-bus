@@ -22,7 +22,10 @@ class UpstreamError(Exception):
 
 def fetch(path: str, params: dict, ttl: int = 10) -> list:
     """ws.bus.go.kr REST 호출 → <itemList> 목록을 dict 리스트로. ttl 이내 재요청은 캐시."""
-    key = urllib.parse.unquote(os.environ["DATA_GO_KR_KEY"])  # Encoding/Decoding 키 모두 허용
+    raw_key = os.environ.get("DATA_GO_KR_KEY")
+    if not raw_key:
+        raise UpstreamError("DATA_GO_KR_KEY 환경변수가 설정되지 않았습니다 (Vercel Project Settings → Environment Variables)")
+    key = urllib.parse.unquote(raw_key)  # Encoding/Decoding 키 모두 허용
     qs = urllib.parse.urlencode({**params, "serviceKey": key})
     url = f"{BASE}/{path}?{qs}"
 

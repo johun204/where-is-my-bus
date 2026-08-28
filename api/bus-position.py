@@ -13,15 +13,20 @@ def _int(v):
 
 class handler(BaseHTTPRequestHandler):
     def do_GET(self):
+        try:
+            self._handle()
+        except UpstreamError as e:
+            send(self, {"error": "upstream", "detail": str(e)}, ttl=0, status=502)
+        except Exception as e:  # 어떤 예외도 FUNCTION_INVOCATION_FAILED 대신 읽을 수 있는 응답으로
+            send(self, {"error": "server", "detail": repr(e)}, ttl=0, status=500)
+
+    def _handle(self):
         q = parse_qs(urlparse(self.path).query)
         route_id = q.get("routeId", [""])[0]  # 서울 busRouteId
         if not route_id:
             return send(self, {"error": "routeId required"}, ttl=0, status=400)
 
-        try:
-            items = fetch("buspos/getBusPosByRtid", {"busRouteId": route_id}, ttl=10)
-        except UpstreamError as e:
-            return send(self, {"error": "upstream", "detail": str(e)}, ttl=0, status=502)
+        items = fetch("buspos/getBusPosByRtid", {"busRouteId": route_id}, ttl=10)
 
         buses = [
             {

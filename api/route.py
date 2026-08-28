@@ -10,6 +10,8 @@ class handler(BaseHTTPRequestHandler):
             self._handle()
         except UpstreamError as e:
             send(self, {"error": "upstream", "detail": str(e)}, ttl=0, status=502)
+        except Exception as e:  # 어떤 예외도 FUNCTION_INVOCATION_FAILED 대신 읽을 수 있는 응답으로
+            send(self, {"error": "server", "detail": repr(e)}, ttl=0, status=500)
 
     def _handle(self):
         q = parse_qs(urlparse(self.path).query)
