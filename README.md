@@ -16,7 +16,7 @@ src/
   map/busPath.js               경로 투영 + 경로를 따라가는 보간 계산
   map/busOverlay.js            색상 입힌 버스 마커(inline SVG CustomOverlay)
   map/drawRoute.js             Polyline + 정류장 점마커
-  map/useBusMarkers.js         15초 폴링 + requestAnimationFrame 보간 애니메이션
+  map/useBusMarkers.js         15초 폴링 + 경로상 평균속도 추측항법(대기 중 계속 전진, 응답 시 보정·속도 재계산)
   map/RouteLayer.jsx           노선 1개 = 경로 + 정류장 + 버스
 public/                 manifest / service worker / 아이콘 (iOS '홈 화면에 추가' 지원)
 ```
