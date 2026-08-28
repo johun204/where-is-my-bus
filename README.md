@@ -3,6 +3,9 @@
 서울시 버스 노선·정류장·실시간 위치를 지도에 시각화하는 PWA.
 Vercel(React + Python Serverless Functions) + 카카오맵, DB 없이 localStorage.
 
+배포: https://where-is-my-bus-web.vercel.app
+(지도 렌더링에는 카카오 콘솔 Web 플랫폼에 이 도메인 등록 필요)
+
 ## 구조
 
 ```
