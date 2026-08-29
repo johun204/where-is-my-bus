@@ -75,12 +75,15 @@ export function useMyLocation(map, onHeading) {
       startOrient();
     }
 
-    function exitFollow() {
+    function exitFollow(snap) {
       if (!following) return;
       setFollowing(false);
       stopOrient();
+      // 진행 중인 panTo 애니메이션을 확정 위치로 즉시 멈춤 (이후 드래그가 겹치지 않도록).
+      // dragstart 로 인한 해제(snap=false)는 카카오가 이미 드래그 중이라 건드리지 않음.
+      if (snap && lastLL) map.setCenter(lastLL);
     }
-    exitRef.current = exitFollow;
+    exitRef.current = () => exitFollow(true);
 
     function onPos(p) {
       lastLL = new kakao.maps.LatLng(p.coords.latitude, p.coords.longitude);
@@ -103,9 +106,9 @@ export function useMyLocation(map, onHeading) {
 
     const onUserPan = () => {
       centered = false;
-      exitFollow();
+      exitFollow(false);
     };
-    const onUserZoom = () => exitFollow();
+    const onUserZoom = () => exitFollow(true);
     kakao.maps.event.addListener(map, 'dragstart', onUserPan);
     kakao.maps.event.addListener(map, 'zoom_changed', onUserZoom);
 

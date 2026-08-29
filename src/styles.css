@@ -10,7 +10,12 @@ body {
 
 /* 지도 회전: Kakao 는 회전 API가 없어 오버사이즈 래퍼를 CSS transform 으로 돌린다.
    래퍼가 화면보다 충분히 커야 돌려도 여백이 안 보임(대각선 이상). */
-.map-stage { position: absolute; inset: 0; overflow: hidden; }
+.map-stage {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  touch-action: none; /* 브라우저 자체 팬/핀치줌 차단 — 지도 제스처와 겹치지 않게 */
+}
 .map-rot {
   position: absolute;
   top: 50%;
