@@ -6,7 +6,8 @@ import { routeTypeColor } from './routeColor';
 const FAST_MS = 3000; // 접속 직후: 이 간격으로
 const FAST_COUNT = 3; // 이만큼 fetch 해서 평균속도를 빨리 확보한 뒤
 const SLOW_MS = 10000; // 이후 통상 폴링 주기
-const MAX_EXTRAP_MS = SLOW_MS * 2; // 응답이 늦어도 이 시간까지만 외삽
+const MAX_EXTRAP_MS = 25000; // 응답이 늦어도 이 시간까지만 외삽(지연보정 포함)
+const LEAD_FALLBACK_MS = 7000; // dataTm 없거나 시계 어긋날 때 기본 지연 추정치
 const WINDOW = 3; // 평균속도를 낼 때 쓰는 최근 fetch 개수 (짧을수록 최근 움직임에 민감)
 const SNAP_M = 120; // 경로에서 이만큼 벗어난 좌표는 보정 없이 스냅 (도로 형상 기준)
 const JUMP_M = 3000; // 경로상 이만큼 튀면(순환노선 한 바퀴 등) 스냅
@@ -14,6 +15,23 @@ const MAX_SPEED = 18; // m/s (~65km/h) 평균속도 상한
 const SMOOTH_TAU = 1.0; // s. 화면 위치가 예측 위치로 수렴하는 시간상수
 
 const clamp = (v, lo, hi) => (v < lo ? lo : v > hi ? hi : v);
+
+// dataTm(KST yyyyMMddHHmmss) → 지금 이 데이터가 얼마나 지난 것인지(ms).
+// 기기 시계가 어긋나 값이 비정상이면 기본값 사용.
+function estLeadMs(dataTm) {
+  if (!/^\d{14}$/.test(dataTm || '')) return LEAD_FALLBACK_MS;
+  const s = dataTm;
+  const epoch = Date.UTC(
+    +s.slice(0, 4),
+    +s.slice(4, 6) - 1,
+    +s.slice(6, 8),
+    +s.slice(8, 10) - 9, // KST → UTC
+    +s.slice(10, 12),
+    +s.slice(12, 14),
+  );
+  const lag = Date.now() - epoch;
+  return lag >= 0 && lag < 40000 ? lag : LEAD_FALLBACK_MS;
+}
 
 // 카카오 지도 레벨(1 가까움 ~ 14 멂) → 버스 아이콘 배율
 function zoomScale(level) {
@@ -57,8 +75,12 @@ export function useBusMarkers(map, route) {
       lastFrame = now;
       const k = 1 - Math.exp(-dt / SMOOTH_TAU);
       for (const st of buses.values()) {
-        const age = Math.min((now - st.refTime) / 1000, MAX_EXTRAP_MS / 1000);
-        const predicted = clamp(st.refAlong + st.speed * age, 0, path.total);
+        // 수신 후 경과 + 수신 시점의 데이터 지연 = 실제 '현재'까지의 시간 → 그만큼 앞선 위치로
+        const t = Math.min(
+          (now - st.refTime) / 1000 + (st.leadMs || LEAD_FALLBACK_MS) / 1000,
+          MAX_EXTRAP_MS / 1000,
+        );
+        const predicted = clamp(st.refAlong + st.speed * t, 0, path.total);
         st.along += (predicted - st.along) * k;
         const p = pointAtDistance(path, st.along);
         st.overlay.setPosition(new kakao.maps.LatLng(p.lat, p.lng));
@@ -106,6 +128,7 @@ export function useBusMarkers(map, route) {
           hint = path.total * frac; // path 는 도로 형상(정류장 수와 점 개수가 다름)
         }
         const proj = projectOnPath(path, b, hint);
+        const leadMs = estLeadMs(b.dataTm);
 
         if (!st) {
           const p0 = pointAtDistance(path, proj.along);
@@ -122,6 +145,7 @@ export function useBusMarkers(map, route) {
             speed: 0,
             refAlong: proj.along,
             refTime: now,
+            leadMs,
             samples: [{ along: proj.along, t: now }],
           });
           continue;
@@ -140,6 +164,7 @@ export function useBusMarkers(map, route) {
         }
         st.refAlong = proj.along;
         st.refTime = now;
+        st.leadMs = leadMs;
       }
 
       for (const [vno, st] of buses) {

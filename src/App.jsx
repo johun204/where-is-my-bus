@@ -14,6 +14,7 @@ export default function App() {
   const mapRotRef = useRef(0);
   const rotSrcRef = useRef('none'); // 'follow' | 'manual' — 회전 값의 출처
   const prevFollowRef = useRef(false);
+  const followRef = useRef(false);
 
   const [map, setMap] = useState(null);
   const [query, setQuery] = useState('');
@@ -47,6 +48,10 @@ export default function App() {
     });
   }, []);
 
+  useEffect(() => {
+    followRef.current = follow;
+  }, [follow]);
+
   // 추적 해제 시(드래그/줌 등) 정북으로 복귀 — 단, 사용자가 직접 돌린 각도는 유지
   useEffect(() => {
     if (prevFollowRef.current && !follow && rotSrcRef.current === 'follow') {
@@ -67,6 +72,19 @@ export default function App() {
     let g = null;
 
     const onStart = (e) => {
+      // 추적 모드에서 한 손가락 이동 시작 → 즉시 추적 해제 + 전환 애니메이션 없이 정북으로
+      // (지도가 회전돼 있으면 한 손가락 팬이 화면과 어긋나므로)
+      if (e.touches.length === 1 && followRef.current) {
+        exitFollow();
+        const el = rotEl.current;
+        if (el) {
+          el.style.transition = 'none';
+          applyRot(0, 'follow');
+          void el.offsetWidth; // reflow
+          el.style.transition = '';
+        }
+        return; // stopPropagation 하지 않음 → 카카오가 정상적으로 팬
+      }
       if (e.touches.length === 2)
         g = { a0: ang(e.touches), d0: dist(e.touches), r0: mapRotRef.current, mode: null };
     };

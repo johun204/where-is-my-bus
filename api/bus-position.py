@@ -38,6 +38,7 @@ class handler(BaseHTTPRequestHandler):
                 "lat": float(it["gpsY"]),
                 "lng": float(it["gpsX"]),
                 "sectOrd": _int(it.get("sectOrd")),  # 현재 구간 순번
+                "dataTm": it.get("dataTm"),  # 위치 갱신시각 yyyyMMddHHmmss (KST) — 지연 보정용
                 "lowFloor": it.get("busType") == "1",
                 "congestion": _int(it.get("congetion")),  # API 스펙상 철자 그대로
             }
