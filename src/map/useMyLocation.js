@@ -3,16 +3,14 @@ import { createMyLocation } from './myLocation';
 
 /**
  * 현위치를 계속(watchPosition) 추적한다.
- * FAB 동작:
- *   - 위치 아직 없음     → 강제 1회 측위
- *   - 중심이 내가 아님   → 나에게로 이동
- *   - 이미 나에게 중심   → 추적 모드 진입 (지도가 나를 계속 따라오고, 바라보는 방향 콘 표시)
- *   - 추적 모드 중       → 해제
- * 추적 모드는 사용자가 지도를 드래그하거나 축척을 바꾸면 자동 해제된다.
+ * FAB: (1) 나에게 이동 → (2) 다시 누르면 추적 모드 → (추적 중) 누르면 해제.
+ * 추적 모드에서 지도를 드래그/축척변경/회전하면 자동 해제.
+ * onHeading(deg): 추적 모드에서 나침반 방위가 갱신될 때마다 호출(지도 방향 회전용).
  */
-export function useMyLocation(map) {
+export function useMyLocation(map, onHeading) {
   const [follow, setFollow] = useState(false);
   const fabRef = useRef(() => {});
+  const exitRef = useRef(() => {});
 
   useEffect(() => {
     if (!map || !navigator.geolocation) return undefined;
@@ -24,6 +22,7 @@ export function useMyLocation(map) {
     let following = false;
     let didInitCenter = false;
     let orientEvt = null;
+    let smoothH = null;
 
     function onOrient(e) {
       let h = null;
@@ -31,7 +30,14 @@ export function useMyLocation(map) {
       else if (e.absolute && typeof e.alpha === 'number') h = 360 - e.alpha; // Android
       if (h == null || Number.isNaN(h)) return;
       const scr = (screen.orientation && screen.orientation.angle) || 0;
-      overlay?.setHeading((h + scr + 360) % 360);
+      h = (h + scr + 360) % 360;
+      if (smoothH == null) smoothH = h;
+      else {
+        const d = ((h - smoothH + 540) % 360) - 180; // 원형 지수평활
+        smoothH = (smoothH + 0.3 * d + 360) % 360;
+      }
+      overlay?.setHeading(smoothH);
+      onHeading?.(smoothH);
     }
 
     async function startOrient() {
@@ -53,6 +59,7 @@ export function useMyLocation(map) {
     function stopOrient() {
       if (orientEvt) window.removeEventListener(orientEvt, onOrient);
       orientEvt = null;
+      smoothH = null;
       overlay?.setHeading(null);
     }
 
@@ -73,6 +80,7 @@ export function useMyLocation(map) {
       setFollowing(false);
       stopOrient();
     }
+    exitRef.current = exitFollow;
 
     function onPos(p) {
       lastLL = new kakao.maps.LatLng(p.coords.latitude, p.coords.longitude);
@@ -97,7 +105,7 @@ export function useMyLocation(map) {
       centered = false;
       exitFollow();
     };
-    const onUserZoom = () => exitFollow(); // 축척 변경도 추적 해제
+    const onUserZoom = () => exitFollow();
     kakao.maps.event.addListener(map, 'dragstart', onUserPan);
     kakao.maps.event.addListener(map, 'zoom_changed', onUserZoom);
 
@@ -127,8 +135,13 @@ export function useMyLocation(map) {
       stopOrient();
       overlay?.remove();
       fabRef.current = () => {};
+      exitRef.current = () => {};
     };
-  }, [map]);
+  }, [map, onHeading]);
 
-  return { follow, onFab: () => fabRef.current() };
+  return {
+    follow,
+    onFab: () => fabRef.current(),
+    exitFollow: () => exitRef.current(),
+  };
 }

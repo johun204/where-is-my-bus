@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { ErrorBoundary } from './ErrorBoundary';
 import { useFavoriteRoutes } from './hooks/useFavoriteRoutes';
 import { RouteLayer } from './map/RouteLayer';
@@ -9,13 +9,32 @@ const FALLBACK = { lat: 37.5665, lng: 126.978 }; // 서울시청 (위치 권한 
 
 export default function App() {
   const mapEl = useRef(null);
+  const rotEl = useRef(null); // 회전 래퍼 (--map-rot CSS 변수 소유)
+  const stageEl = useRef(null);
+  const mapRotRef = useRef(0);
+  const rotSrcRef = useRef('none'); // 'follow' | 'manual' — 회전 값의 출처
+  const prevFollowRef = useRef(false);
+
   const [map, setMap] = useState(null);
   const [query, setQuery] = useState('');
   const [results, setResults] = useState(null);
   const [searching, setSearching] = useState(false);
   const [installEvt, setInstallEvt] = useState(null);
   const { favorites, has, toggle, toggleEnabled } = useFavoriteRoutes();
-  const { follow, onFab } = useMyLocation(map);
+
+  const applyRot = useCallback((deg, src) => {
+    rotSrcRef.current = src;
+    mapRotRef.current = deg;
+    rotEl.current?.style.setProperty('--map-rot', `${deg}deg`);
+  }, []);
+
+  // 추적 모드: 바라보는 방향이 항상 지도 12시가 되도록 지도를 -heading 만큼 회전
+  const onHeading = useCallback(
+    (deg) => applyRot(-deg, 'follow'),
+    [applyRot],
+  );
+
+  const { follow, onFab, exitFollow } = useMyLocation(map, onHeading);
 
   useEffect(() => {
     window.kakao.maps.load(() => {
@@ -28,7 +47,62 @@ export default function App() {
     });
   }, []);
 
-  // PWA 설치 프롬프트 캡처 (Android/데스크톱 Chrome)
+  // 추적 해제 시(드래그/줌 등) 정북으로 복귀 — 단, 사용자가 직접 돌린 각도는 유지
+  useEffect(() => {
+    if (prevFollowRef.current && !follow && rotSrcRef.current === 'follow') {
+      applyRot(0, 'follow');
+    }
+    prevFollowRef.current = follow;
+  }, [follow, applyRot]);
+
+  // 두 손가락 비틀기 → 지도 회전
+  useEffect(() => {
+    const stage = stageEl.current;
+    if (!stage) return undefined;
+    const ang = (t) =>
+      (Math.atan2(t[1].clientY - t[0].clientY, t[1].clientX - t[0].clientX) * 180) /
+      Math.PI;
+    const dist = (t) =>
+      Math.hypot(t[1].clientX - t[0].clientX, t[1].clientY - t[0].clientY);
+    let g = null;
+
+    const onStart = (e) => {
+      if (e.touches.length === 2)
+        g = { a0: ang(e.touches), d0: dist(e.touches), r0: mapRotRef.current, mode: null };
+    };
+    const onMove = (e) => {
+      if (!g || e.touches.length !== 2) return;
+      let da = ang(e.touches) - g.a0;
+      da = ((da + 540) % 360) - 180;
+      const scale = dist(e.touches) / g.d0;
+      if (!g.mode) {
+        if (Math.abs(da) > 10 && Math.abs(scale - 1) < 0.2) g.mode = 'rotate';
+        else if (Math.abs(scale - 1) > 0.15) g.mode = 'zoom'; // 카카오 핀치줌에 양보
+      }
+      if (g.mode !== 'rotate') return;
+      e.stopPropagation(); // 카카오가 이 제스처를 줌으로 처리하지 못하게
+      e.preventDefault();
+      let r = g.r0 + da;
+      const m = ((r % 360) + 360) % 360;
+      if (m < 4 || m > 356) r = Math.round(r / 360) * 360; // 정북 근처 스냅
+      applyRot(r, 'manual');
+      exitFollow(); // 직접 돌리면 추적 해제 (정북 복귀는 하지 않음)
+    };
+    const onEnd = (e) => {
+      if (e.touches.length < 2) g = null;
+    };
+
+    stage.addEventListener('touchstart', onStart, { capture: true, passive: false });
+    stage.addEventListener('touchmove', onMove, { capture: true, passive: false });
+    stage.addEventListener('touchend', onEnd, { capture: true });
+    return () => {
+      stage.removeEventListener('touchstart', onStart, true);
+      stage.removeEventListener('touchmove', onMove, true);
+      stage.removeEventListener('touchend', onEnd, true);
+    };
+  }, [applyRot, exitFollow]);
+
+  // PWA 설치 프롬프트 캡처
   useEffect(() => {
     const onPrompt = (e) => {
       e.preventDefault();
@@ -63,7 +137,11 @@ export default function App() {
 
   return (
     <div className="app">
-      <div ref={mapEl} className="map" />
+      <div className="map-stage" ref={stageEl}>
+        <div className="map-rot" ref={rotEl}>
+          <div ref={mapEl} className="map" />
+        </div>
+      </div>
 
       <div className="topbar">
         <form className="search" onSubmit={search}>

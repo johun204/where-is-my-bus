@@ -6,7 +6,23 @@ body {
   -webkit-tap-highlight-color: transparent;
 }
 
-.app { position: fixed; inset: 0; }
+.app { position: fixed; inset: 0; background: #0c0c0c; }
+
+/* 지도 회전: Kakao 는 회전 API가 없어 오버사이즈 래퍼를 CSS transform 으로 돌린다.
+   래퍼가 화면보다 충분히 커야 돌려도 여백이 안 보임(대각선 이상). */
+.map-stage { position: absolute; inset: 0; overflow: hidden; }
+.map-rot {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 135vmax;
+  height: 135vmax;
+  margin-top: -67.5vmax;
+  margin-left: -67.5vmax;
+  transform-origin: 50% 50%;
+  transform: rotate(var(--map-rot, 0deg));
+  transition: transform 0.16s linear;
+}
 .map { position: absolute; inset: 0; }
 
 /* 상단 검색 바 */
@@ -196,6 +212,7 @@ body {
   top: 0;
   transform-origin: 50% 50%;
   transform: translate(-50%, -50%);
+  transition: transform 0.16s linear; /* .map-rot 과 같은 속도로 → 추적 중 12시 유지 */
   pointer-events: none;
 }
 
@@ -218,7 +235,8 @@ body {
   position: absolute;
   bottom: 100%;
   left: 50%;
-  transform: translateX(-50%);
+  /* 지도가 회전해도 번호는 수평 유지 */
+  transform: translateX(-50%) rotate(calc(-1 * var(--map-rot, 0deg)));
   margin-bottom: 3px;
   padding: 1px 5px;
   font: 700 11px/1.15 system-ui, sans-serif;
