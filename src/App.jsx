@@ -3,9 +3,9 @@ import { ErrorBoundary } from './ErrorBoundary';
 import { useFavoriteRoutes } from './hooks/useFavoriteRoutes';
 import { RouteLayer } from './map/RouteLayer';
 import { routeTypeColor } from './map/routeColor';
+import { useMyLocation } from './map/useMyLocation';
 
 const FALLBACK = { lat: 37.5665, lng: 126.978 }; // 서울시청 (위치 권한 거부 시)
-const GEO_OPTS = { enableHighAccuracy: true, timeout: 8000, maximumAge: 30000 };
 
 export default function App() {
   const mapEl = useRef(null);
@@ -14,8 +14,8 @@ export default function App() {
   const [results, setResults] = useState(null);
   const [searching, setSearching] = useState(false);
   const [installEvt, setInstallEvt] = useState(null);
-  const myRef = useRef(null); // 현위치 오버레이
   const { favorites, has, toggle, toggleEnabled } = useFavoriteRoutes();
+  const { follow, onFab } = useMyLocation(map);
 
   useEffect(() => {
     window.kakao.maps.load(() => {
@@ -28,16 +28,6 @@ export default function App() {
     });
   }, []);
 
-  // 첫 진입 시 현재 위치로 이동
-  useEffect(() => {
-    if (!map || !navigator.geolocation) return;
-    navigator.geolocation.getCurrentPosition(
-      (p) => showMyLocation(p.coords.latitude, p.coords.longitude, true),
-      () => {}, // 거부 시 서울시청 유지
-      GEO_OPTS,
-    );
-  }, [map]); // eslint-disable-line react-hooks/exhaustive-deps
-
   // PWA 설치 프롬프트 캡처 (Android/데스크톱 Chrome)
   useEffect(() => {
     const onPrompt = (e) => {
@@ -47,33 +37,6 @@ export default function App() {
     window.addEventListener('beforeinstallprompt', onPrompt);
     return () => window.removeEventListener('beforeinstallprompt', onPrompt);
   }, []);
-
-  function showMyLocation(lat, lng, center) {
-    const { kakao } = window;
-    const ll = new kakao.maps.LatLng(lat, lng);
-    if (!myRef.current) {
-      const el = document.createElement('div');
-      el.className = 'myloc';
-      myRef.current = new kakao.maps.CustomOverlay({
-        map,
-        position: ll,
-        content: el,
-        zIndex: 9,
-      });
-    } else {
-      myRef.current.setPosition(ll);
-    }
-    if (center) map.panTo(ll);
-  }
-
-  function locate() {
-    if (!navigator.geolocation) return;
-    navigator.geolocation.getCurrentPosition(
-      (p) => showMyLocation(p.coords.latitude, p.coords.longitude, true),
-      () => alert('현재 위치를 가져올 수 없어요. 위치 권한을 확인해 주세요.'),
-      GEO_OPTS,
-    );
-  }
 
   async function search(e) {
     e.preventDefault();
@@ -163,7 +126,11 @@ export default function App() {
         )}
       </div>
 
-      <button className="fab" onClick={locate} aria-label="현재 위치">
+      <button
+        className={`fab${follow ? ' fab--follow' : ''}`}
+        onClick={onFab}
+        aria-label="현재 위치"
+      >
         ◎
       </button>
 
