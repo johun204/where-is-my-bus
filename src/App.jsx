@@ -96,8 +96,27 @@ export default function App() {
       }
       if (e.touches.length === 2) {
         pan = null;
-        g = { a0: ang(e.touches), d0: dist(e.touches), r0: mapRotRef.current, mode: null };
+        g = {
+          a0: ang(e.touches),
+          d0: dist(e.touches),
+          r0: mapRotRef.current,
+          lvl0: map.getLevel(),
+          mode: null,
+        };
       }
+    };
+
+    // 화면 좌표 → 지도 div 컨테이너 좌표 (회전 보정). 핀치 앵커 계산용.
+    const screenToContainer = (sx, sy) => {
+      const r = stage.getBoundingClientRect();
+      const ox = sx - (r.left + r.width / 2);
+      const oy = sy - (r.top + r.height / 2);
+      const rad = (-mapRotRef.current * Math.PI) / 180;
+      const cos = Math.cos(rad);
+      const sin = Math.sin(rad);
+      const proj = map.getProjection();
+      const cd = proj.containerPointFromCoords(map.getCenter());
+      return new kakao.maps.Point(cd.x + ox * cos - oy * sin, cd.y + ox * sin + oy * cos);
     };
 
     const onMove = (e) => {
@@ -134,16 +153,36 @@ export default function App() {
       const scale = dist(e.touches) / g.d0;
       if (!g.mode) {
         if (Math.abs(da) > 10 && Math.abs(scale - 1) < 0.2) g.mode = 'rotate';
-        else if (Math.abs(scale - 1) > 0.15) g.mode = 'zoom'; // 카카오 핀치줌에 양보
+        else if (Math.abs(scale - 1) > 0.15) g.mode = 'zoom';
       }
-      if (g.mode !== 'rotate') return;
-      e.stopPropagation();
-      e.preventDefault();
-      let r = g.r0 + da;
-      const m = ((r % 360) + 360) % 360;
-      if (m < 4 || m > 356) r = Math.round(r / 360) * 360; // 정북 근처 스냅
-      applyRot(r, 'manual');
-      exitFollow();
+
+      if (g.mode === 'rotate') {
+        e.stopPropagation();
+        e.preventDefault();
+        let r = g.r0 + da;
+        const m = ((r % 360) + 360) % 360;
+        if (m < 4 || m > 356) r = Math.round(r / 360) * 360; // 정북 근처 스냅
+        applyRot(r, 'manual');
+        exitFollow();
+        return;
+      }
+
+      if (g.mode === 'zoom') {
+        if (rotAmount() === 0) return; // 정북이면 카카오 기본 핀치줌 사용
+        e.stopPropagation();
+        e.preventDefault();
+        const target = Math.max(1, Math.min(13, Math.round(g.lvl0 - Math.log2(scale))));
+        if (target !== map.getLevel()) {
+          const mx = (e.touches[0].clientX + e.touches[1].clientX) / 2;
+          const my = (e.touches[0].clientY + e.touches[1].clientY) / 2;
+          const anchor = map
+            .getProjection()
+            .coordsFromContainerPoint(screenToContainer(mx, my));
+          map.setLevel(target, { anchor });
+          g.lvl0 = target; // 재기준 (누적 오차 방지)
+          g.d0 = dist(e.touches);
+        }
+      }
     };
 
     const onEnd = (e) => {
