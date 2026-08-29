@@ -20,7 +20,7 @@ src/
   map/busPath.js               경로 투영 + 경로를 따라가는 보간 계산
   map/busOverlay.js            버스 마커(노선색 SVG + 상단 노선번호), setScale로 축척 연동
   map/drawRoute.js             Polyline + 정류장 점마커
-  map/useBusMarkers.js         15초 폴링 + 최근 5회 fetch 평균속도 추측항법(대기 중 전진, 응답 시 보정·재계산) + 줌 연동 스케일
+  map/useBusMarkers.js         폴링(접속직후 3s×3회 → 이후 10s) + 최근 3회 평균속도 추측항법(대기 중 전진, 응답 시 보정·재계산) + 줌 연동 스케일
   map/RouteLayer.jsx           노선 1개 = 경로 + 정류장 + 버스
 public/                 manifest(standalone·maskable) / service worker(HTML 네트워크 우선) / 아이콘
 ```

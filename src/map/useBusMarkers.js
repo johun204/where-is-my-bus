@@ -3,7 +3,10 @@ import { createBusOverlay } from './busOverlay';
 import { buildPath, pointAtDistance, projectOnPath } from './busPath';
 import { routeTypeColor } from './routeColor';
 
-const POLL_MS = 12000; // 실시간 위치 폴링 주기
+const FAST_MS = 3000; // 접속 직후: 이 간격으로
+const FAST_COUNT = 3; // 이만큼 fetch 해서 평균속도를 빨리 확보한 뒤
+const SLOW_MS = 10000; // 이후 통상 폴링 주기
+const MAX_EXTRAP_MS = SLOW_MS * 2; // 응답이 늦어도 이 시간까지만 외삽
 const WINDOW = 3; // 평균속도를 낼 때 쓰는 최근 fetch 개수 (짧을수록 최근 움직임에 민감)
 const SNAP_M = 120; // 경로에서 이만큼 벗어난 좌표는 보정 없이 스냅 (도로 형상 기준)
 const JUMP_M = 3000; // 경로상 이만큼 튀면(순환노선 한 바퀴 등) 스냅
@@ -19,8 +22,9 @@ function zoomScale(level) {
 
 /**
  * 버스를 폴링 주기마다 점프시키지 않고:
- *  - 최근 5회 fetch의 경로상 평균속도로 fetch 대기 중에도 계속 전진(추측항법)
+ *  - 최근 WINDOW회 fetch의 경로상 평균속도로 fetch 대기 중에도 계속 전진(추측항법)
  *  - 새 응답이 오면 실제 위치로 부드럽게 보정하고 평균속도를 다시 계산
+ *  - 접속 직후엔 FAST_MS 간격으로 FAST_COUNT회 받아 평균속도를 빨리 확보
  * 아이콘/번호는 지도 축척에 맞춰 확대축소.
  *
  * route: { routeId, routeNo, routeTp, path: [[lng,lat], ...] }
@@ -53,7 +57,7 @@ export function useBusMarkers(map, route) {
       lastFrame = now;
       const k = 1 - Math.exp(-dt / SMOOTH_TAU);
       for (const st of buses.values()) {
-        const age = Math.min((now - st.refTime) / 1000, (POLL_MS * 2) / 1000);
+        const age = Math.min((now - st.refTime) / 1000, MAX_EXTRAP_MS / 1000);
         const predicted = clamp(st.refAlong + st.speed * age, 0, path.total);
         st.along += (predicted - st.along) * k;
         const p = pointAtDistance(path, st.along);
@@ -144,13 +148,21 @@ export function useBusMarkers(map, route) {
       }
     }
 
-    poll();
-    const timer = setInterval(poll, POLL_MS);
+    // 접속 직후 FAST_COUNT회는 FAST_MS 간격, 이후 SLOW_MS 간격
+    let pollCount = 0;
+    let timer = 0;
+    async function loop() {
+      await poll();
+      if (!alive) return;
+      pollCount += 1;
+      timer = setTimeout(loop, pollCount < FAST_COUNT ? FAST_MS : SLOW_MS);
+    }
+    loop();
 
     return () => {
       alive = false;
       cancelAnimationFrame(raf);
-      clearInterval(timer);
+      clearTimeout(timer);
       kakao.maps.event.removeListener(map, 'zoom_changed', onZoom);
       for (const st of buses.values()) st.overlay.remove();
       buses.clear();

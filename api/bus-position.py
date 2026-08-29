@@ -29,7 +29,7 @@ class handler(BaseHTTPRequestHandler):
         if not route_id:
             return send(self, {"error": "routeId required"}, ttl=0, status=400)
 
-        items = fetch("buspos/getBusPosByRtid", {"busRouteId": route_id}, ttl=10)
+        items = fetch("buspos/getBusPosByRtid", {"busRouteId": route_id}, ttl=2)
 
         buses = [
             {
@@ -44,7 +44,7 @@ class handler(BaseHTTPRequestHandler):
             for it in items
             if it.get("gpsX") not in (None, "", "0") and it.get("gpsY") not in (None, "", "0")
         ]
-        send(self, {"routeId": route_id, "buses": buses}, ttl=10)
+        send(self, {"routeId": route_id, "buses": buses}, ttl=2)
 
     def do_OPTIONS(self):
         send(self, {}, ttl=0)
