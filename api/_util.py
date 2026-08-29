@@ -93,9 +93,11 @@ def _parse(body: str) -> list:
 
 def send(handler, payload: dict, ttl: int = 10, status: int = 200) -> None:
     out = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    # ttl>0: 엣지에서 ttl초 신선 + ttl초 stale 허용. ttl<=0(에러 등): 캐시 안 함.
+    cache = f"s-maxage={ttl}, stale-while-revalidate={ttl}" if ttl > 0 else "no-store"
     handler.send_response(status)
     handler.send_header("Content-Type", "application/json; charset=utf-8")
-    handler.send_header("Cache-Control", f"s-maxage={ttl}, stale-while-revalidate=30")
+    handler.send_header("Cache-Control", cache)
     handler.send_header("Access-Control-Allow-Origin", "*")
     handler.end_headers()
     handler.wfile.write(out)
