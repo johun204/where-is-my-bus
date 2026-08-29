@@ -60,35 +60,74 @@ export default function App() {
     prevFollowRef.current = follow;
   }, [follow, applyRot]);
 
-  // 두 손가락 비틀기 → 지도 회전
+  // 두 손가락 비틀기 = 회전 / 회전된 상태의 한 손가락 이동 = 화면 기준으로 팬(카카오 대체)
   useEffect(() => {
     const stage = stageEl.current;
-    if (!stage) return undefined;
+    if (!stage || !map) return undefined;
+    const { kakao } = window;
     const ang = (t) =>
       (Math.atan2(t[1].clientY - t[0].clientY, t[1].clientX - t[0].clientX) * 180) /
       Math.PI;
     const dist = (t) =>
       Math.hypot(t[1].clientX - t[0].clientX, t[1].clientY - t[0].clientY);
-    let g = null;
+    const rotAmount = () => {
+      const m = ((mapRotRef.current % 360) + 360) % 360;
+      return m > 0.5 && m < 359.5 ? m : 0; // 정북이면 0 (카카오 기본 팬 사용)
+    };
+    let g = null; // 2손가락 제스처
+    let pan = null; // 회전 상태 1손가락 팬
 
     const onStart = (e) => {
-      // 추적 모드에서 한 손가락 이동 시작 → 즉시 추적 해제 + 전환 애니메이션 없이 정북으로
-      // (지도가 회전돼 있으면 한 손가락 팬이 화면과 어긋나므로)
       if (e.touches.length === 1 && followRef.current) {
+        // 추적 모드에서 손 대는 즉시 해제 + 전환 없이 정북 복귀
         exitFollow();
         const el = rotEl.current;
         if (el) {
           el.style.transition = 'none';
           applyRot(0, 'follow');
-          void el.offsetWidth; // reflow
+          void el.offsetWidth;
           el.style.transition = '';
         }
-        return; // stopPropagation 하지 않음 → 카카오가 정상적으로 팬
+        return;
       }
-      if (e.touches.length === 2)
+      if (e.touches.length === 1 && rotAmount() !== 0) {
+        pan = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+        return;
+      }
+      if (e.touches.length === 2) {
+        pan = null;
         g = { a0: ang(e.touches), d0: dist(e.touches), r0: mapRotRef.current, mode: null };
+      }
     };
+
     const onMove = (e) => {
+      // 회전된 지도의 한 손가락 팬: 화면 델타를 -회전각으로 되돌려 카카오 좌표로 이동
+      if (pan && e.touches.length === 1) {
+        const rot = rotAmount();
+        if (rot === 0) {
+          pan = null;
+          return;
+        }
+        e.stopPropagation();
+        e.preventDefault();
+        const t = e.touches[0];
+        const dx = t.clientX - pan.x;
+        const dy = t.clientY - pan.y;
+        pan.x = t.clientX;
+        pan.y = t.clientY;
+        const rad = (-rot * Math.PI) / 180;
+        const cos = Math.cos(rad);
+        const sin = Math.sin(rad);
+        const mdx = dx * cos - dy * sin; // 스크린 델타 → 지도 div 델타
+        const mdy = dx * sin + dy * cos;
+        const proj = map.getProjection();
+        const c = proj.containerPointFromCoords(map.getCenter());
+        map.setCenter(
+          proj.coordsFromContainerPoint(new kakao.maps.Point(c.x - mdx, c.y - mdy)),
+        );
+        return;
+      }
+
       if (!g || e.touches.length !== 2) return;
       let da = ang(e.touches) - g.a0;
       da = ((da + 540) % 360) - 180;
@@ -98,27 +137,31 @@ export default function App() {
         else if (Math.abs(scale - 1) > 0.15) g.mode = 'zoom'; // 카카오 핀치줌에 양보
       }
       if (g.mode !== 'rotate') return;
-      e.stopPropagation(); // 카카오가 이 제스처를 줌으로 처리하지 못하게
+      e.stopPropagation();
       e.preventDefault();
       let r = g.r0 + da;
       const m = ((r % 360) + 360) % 360;
       if (m < 4 || m > 356) r = Math.round(r / 360) * 360; // 정북 근처 스냅
       applyRot(r, 'manual');
-      exitFollow(); // 직접 돌리면 추적 해제 (정북 복귀는 하지 않음)
+      exitFollow();
     };
+
     const onEnd = (e) => {
+      if (e.touches.length < 1) pan = null;
       if (e.touches.length < 2) g = null;
     };
 
     stage.addEventListener('touchstart', onStart, { capture: true, passive: false });
     stage.addEventListener('touchmove', onMove, { capture: true, passive: false });
     stage.addEventListener('touchend', onEnd, { capture: true });
+    stage.addEventListener('touchcancel', onEnd, { capture: true });
     return () => {
       stage.removeEventListener('touchstart', onStart, true);
       stage.removeEventListener('touchmove', onMove, true);
       stage.removeEventListener('touchend', onEnd, true);
+      stage.removeEventListener('touchcancel', onEnd, true);
     };
-  }, [applyRot, exitFollow]);
+  }, [map, applyRot, exitFollow]);
 
   // PWA 설치 프롬프트 캡처
   useEffect(() => {
