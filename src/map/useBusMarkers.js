@@ -82,14 +82,16 @@ export function useBusMarkers(map, route) {
     }
 
     async function poll() {
-      let fresh;
+      let data;
       try {
         const res = await fetch(`/api/bus-position?routeId=${route.routeId}`);
-        fresh = (await res.json()).buses ?? [];
+        data = await res.json();
       } catch {
-        return; // 이번 주기 스킵 — rAF는 마지막 평균속도로 계속 전진
+        return; // 네트워크 오류 — 이번 주기 스킵, rAF는 마지막 평균속도로 계속 전진
       }
       if (!alive) return;
+      if (!Array.isArray(data.buses)) return; // 업스트림 오류 응답 → 스킵(기존 버스 유지)
+      const fresh = data.buses;
 
       const now = performance.now();
       const seen = new Set();
