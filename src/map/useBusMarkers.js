@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { createBusOverlay } from './busOverlay';
-import { buildPath, pointAtDistance, projectOnPath } from './busPath';
+import { buildPath, leadAlong, pointAtDistance, projectOnPath, sidxFor } from './busPath';
 import { routeTypeColor } from './routeColor';
 
 const FAST_MS = 3000; // 접속 직후: 이 간격으로
@@ -57,6 +57,19 @@ export function useBusMarkers(map, route) {
     const path = buildPath(route.path);
     const color = routeTypeColor(route.routeTp);
     const buses = busesRef.current;
+
+    // 각 정류장의 경로상 위치(오름차순) — 지연보정이 정류장을 무시하지 않도록
+    const nStops = route.stops?.length || 0;
+    const stopAlongs = (route.stops || [])
+      .map(
+        (s, idx) =>
+          projectOnPath(
+            path,
+            s,
+            nStops > 1 ? (path.total * (idx + 0.5)) / nStops : null,
+          ).along,
+      )
+      .sort((a, b) => a - b);
     let alive = true;
     let raf = 0;
     let lastFrame = performance.now();
@@ -75,12 +88,17 @@ export function useBusMarkers(map, route) {
       lastFrame = now;
       const k = 1 - Math.exp(-dt / SMOOTH_TAU);
       for (const st of buses.values()) {
-        // 수신 후 경과 + 수신 시점의 데이터 지연 = 실제 '현재'까지의 시간 → 그만큼 앞선 위치로
+        // 수신 후 경과 + 수신 시점의 데이터 지연 = 실제 '현재'까지의 시간
         const t = Math.min(
-          (now - st.refTime) / 1000 + (st.leadMs || LEAD_FALLBACK_MS) / 1000,
+          (now - st.refTime) / 1000 + (st.leadMs ?? LEAD_FALLBACK_MS) / 1000,
           MAX_EXTRAP_MS / 1000,
         );
-        const predicted = clamp(st.refAlong + st.speed * t, 0, path.total);
+        // 그만큼 앞선 위치 — 단 앞의 정류장에서 정차 시간을 빼서 지나치지 않게
+        const predicted = clamp(
+          leadAlong(st.refAlong, st.speed, t, stopAlongs, st.sidx || 0),
+          0,
+          path.total,
+        );
         st.along += (predicted - st.along) * k;
         const p = pointAtDistance(path, st.along);
         st.overlay.setPosition(new kakao.maps.LatLng(p.lat, p.lng));
@@ -128,7 +146,9 @@ export function useBusMarkers(map, route) {
           hint = path.total * frac; // path 는 도로 형상(정류장 수와 점 개수가 다름)
         }
         const proj = projectOnPath(path, b, hint);
-        const leadMs = estLeadMs(b.dataTm);
+        // 데이터 시점에 정류소에 있었으면 데이터-지연 리드는 0 (그 자리에 있을 확률 높음)
+        const leadMs = b.stopFlag === 1 ? 0 : estLeadMs(b.dataTm);
+        const sidx = sidxFor(stopAlongs, proj.along);
 
         if (!st) {
           const p0 = pointAtDistance(path, proj.along);
@@ -146,6 +166,7 @@ export function useBusMarkers(map, route) {
             refAlong: proj.along,
             refTime: now,
             leadMs,
+            sidx,
             samples: [{ along: proj.along, t: now }],
           });
           continue;
@@ -165,6 +186,7 @@ export function useBusMarkers(map, route) {
         st.refAlong = proj.along;
         st.refTime = now;
         st.leadMs = leadMs;
+        st.sidx = sidx;
       }
 
       for (const [vno, st] of buses) {

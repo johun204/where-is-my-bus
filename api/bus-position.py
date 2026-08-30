@@ -39,6 +39,7 @@ class handler(BaseHTTPRequestHandler):
                 "lng": float(it["gpsX"]),
                 "sectOrd": _int(it.get("sectOrd")),  # 현재 구간 순번
                 "dataTm": it.get("dataTm"),  # 위치 갱신시각 yyyyMMddHHmmss (KST) — 지연 보정용
+                "stopFlag": _int(it.get("stopFlag")),  # 1이면 정류소 도착/정차 상태
                 "lowFloor": it.get("busType") == "1",
                 "congestion": _int(it.get("congetion")),  # API 스펙상 철자 그대로
             }

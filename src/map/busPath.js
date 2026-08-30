@@ -64,6 +64,51 @@ export function pointAtDistance({ pts, cum, total }, along) {
   };
 }
 
+const DWELL_S = 5; // 지연보정 중 정류장 하나를 지나는 데 배정하는 시간(정차·가감속)
+const STOP_EPS = 8; // 이 거리 안이면 그 정류장에 '있는' 것으로 간주
+
+/**
+ * refAlong 에서 leadSec 만큼 앞선 경로상 위치.
+ * 앞에 정류장이 있으면 그 정류장에서 DWELL_S 만큼 시간을 소비(정차)한 것으로 쳐서
+ * 지연보정이 정류장을 무작정 지나쳐 버리지 않게 한다.
+ */
+export function leadAlong(refAlong, speed, leadSec, stopAlongs, startIdx = 0) {
+  if (speed < 0.6 || leadSec <= 0) return refAlong;
+  let pos = refAlong;
+  let remain = leadSec;
+  let i = startIdx;
+  while (i < stopAlongs.length && stopAlongs[i] < pos - STOP_EPS) i += 1;
+  while (i < stopAlongs.length && remain > 0) {
+    const gap = stopAlongs[i] - pos;
+    if (gap > 0) {
+      const t = gap / speed;
+      if (t > remain) {
+        pos += speed * remain; // 정류장에 못 미치고 리드 종료
+        remain = 0;
+        break;
+      }
+      pos = stopAlongs[i]; // 정류장 도달
+      remain -= t;
+    }
+    remain -= DWELL_S; // 이 정류장에서 소요
+    i += 1;
+  }
+  if (remain > 0) pos += speed * remain;
+  return pos;
+}
+
+/** stopAlongs(오름차순)에서 along 이상인 첫 인덱스 */
+export function sidxFor(stopAlongs, along) {
+  let lo = 0;
+  let hi = stopAlongs.length;
+  while (lo < hi) {
+    const m = (lo + hi) >> 1;
+    if (stopAlongs[m] < along - STOP_EPS) lo = m + 1;
+    else hi = m;
+  }
+  return lo;
+}
+
 // --- 내부 ---
 function closestOnSeg(a, b, p) {
   // 짧은 구간이라 위도 보정한 평면 근사로 충분
