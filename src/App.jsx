@@ -7,6 +7,21 @@ import { useMyLocation } from './map/useMyLocation';
 
 const FALLBACK = { lat: 37.5665, lng: 126.978 }; // 서울시청 (위치 권한 거부 시)
 
+const seen = (k) => {
+  try {
+    return !!localStorage.getItem(`busmap.onboard.${k}`);
+  } catch {
+    return true;
+  }
+};
+const markSeen = (k) => {
+  try {
+    localStorage.setItem(`busmap.onboard.${k}`, '1');
+  } catch {
+    /* ignore */
+  }
+};
+
 export default function App() {
   const mapEl = useRef(null);
   const rotEl = useRef(null); // 회전 래퍼 (--map-rot CSS 변수 소유)
@@ -21,7 +36,31 @@ export default function App() {
   const [results, setResults] = useState(null);
   const [searching, setSearching] = useState(false);
   const [installEvt, setInstallEvt] = useState(null);
+  const [coach, setCoach] = useState(() => (seen('search') ? null : 'search'));
+  const prevFavCount = useRef(0);
   const { favorites, has, toggle, toggleEnabled } = useFavoriteRoutes();
+
+  // 처음 노선을 추가하면 칩(껐다 켜기) 안내
+  useEffect(() => {
+    const was = prevFavCount.current;
+    prevFavCount.current = favorites.length;
+    if (was === 0 && favorites.length > 0 && !seen('chip')) {
+      setCoach('chip');
+      const t = setTimeout(() => {
+        markSeen('chip');
+        setCoach((c) => (c === 'chip' ? null : c));
+      }, 8000);
+      return () => clearTimeout(t);
+    }
+    return undefined;
+  }, [favorites.length]);
+
+  const dismissCoach = () => {
+    setCoach((c) => {
+      if (c) markSeen(c);
+      return null;
+    });
+  };
 
   const applyRot = useCallback((deg, src) => {
     rotSrcRef.current = src;
@@ -39,12 +78,12 @@ export default function App() {
 
   useEffect(() => {
     window.kakao.maps.load(() => {
-      setMap(
-        new window.kakao.maps.Map(mapEl.current, {
-          center: new window.kakao.maps.LatLng(FALLBACK.lat, FALLBACK.lng),
-          level: 4,
-        }),
-      );
+      const m = new window.kakao.maps.Map(mapEl.current, {
+        center: new window.kakao.maps.LatLng(FALLBACK.lat, FALLBACK.lng),
+        level: 4,
+      });
+      window.kakao.maps.event.addListener(m, 'click', () => setResults(null));
+      setMap(m);
     });
   }, []);
 
@@ -214,6 +253,7 @@ export default function App() {
 
   async function search(e) {
     e.preventDefault();
+    if (coach === 'search') dismissCoach();
     const q = query.trim();
     if (!q) return;
     setSearching(true);
@@ -260,17 +300,30 @@ export default function App() {
           )}
         </form>
 
+        {coach === 'search' && (
+          <button type="button" className="coach" onClick={dismissCoach}>
+            버스 번호로 검색해 노선을 추가하세요 · 예: 273, 마포06
+          </button>
+        )}
+
         {results && (
           <ul className="results">
             {results.length === 0 && <li className="empty">검색 결과 없음</li>}
             {results.map((r) => (
-              <li key={r.routeId}>
+              <li
+                key={r.routeId}
+                className={has(r.routeId) ? 'is-added' : ''}
+                onClick={() => {
+                  if (!has(r.routeId)) toggle(r);
+                  setResults(null);
+                }}
+              >
                 <span className="dot" style={{ background: routeTypeColor(r.routeTp) }} />
                 <span className="no">{r.routeNo}</span>
                 <span className="ends">
                   {r.start} ↔ {r.end}
                 </span>
-                <button onClick={() => toggle(r)}>{has(r.routeId) ? '삭제' : '추가'}</button>
+                <span className="mark">{has(r.routeId) ? '추가됨' : '추가'}</span>
               </li>
             ))}
           </ul>
@@ -301,6 +354,12 @@ export default function App() {
               );
             })}
           </div>
+        )}
+
+        {coach === 'chip' && (
+          <button type="button" className="coach" onClick={dismissCoach}>
+            노선 번호를 탭하면 지도에서 껐다 켤 수 있어요 · × 는 삭제
+          </button>
         )}
       </div>
 
