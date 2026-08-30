@@ -1,11 +1,10 @@
 // 아이콘의 '위'가 진행방향. useBusMarkers 가 heading(도)만큼 회전시킨다.
+// 앞쪽(위)이 살짝 좁은 캡슐 + 앞유리 → 화살표 없이도 방향이 읽힘.
 const busSvg = (color) => `
 <svg viewBox="0 0 30 30" width="100%" height="100%" xmlns="http://www.w3.org/2000/svg">
-  <g stroke="#ffffff" stroke-width="1.6" stroke-linejoin="round">
-    <path d="M15 1 L22 9 L8 9 Z" fill="${color}"/>
-    <rect x="7" y="8" width="16" height="20" rx="4" fill="${color}"/>
-    <rect x="10" y="11.5" width="10" height="5" rx="1.2" fill="#ffffff" stroke="none" opacity="0.95"/>
-  </g>
+  <path d="M15 3c4.6 0 6.5 2.6 6.5 6.4v14c0 2.6-1.7 3.9-6.5 3.9s-6.5-1.3-6.5-3.9v-14C8.5 5.6 10.4 3 15 3z"
+        fill="${color}" stroke="#ffffff" stroke-width="1.8" stroke-linejoin="round"/>
+  <rect x="10" y="8.5" width="10" height="4.6" rx="2" fill="#ffffff"/>
 </svg>`;
 
 const innerTransform = (k) => `translate(-50%, -50%) scale(${k})`;
