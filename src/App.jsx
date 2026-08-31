@@ -548,6 +548,21 @@ export default function App() {
                     <span className="arr__t1">{a.arr1 ? a.arr1.msg : '정보 없음'}</span>
                     {a.arr2 && <span className="arr__t2">다음: {a.arr2.msg}</span>}
                   </span>
+                  {a.routeId && (
+                    <button
+                      className={`arr__add${has(a.routeId) ? ' is-added' : ''}`}
+                      disabled={has(a.routeId)}
+                      onClick={() =>
+                        toggle({
+                          routeId: a.routeId,
+                          routeNo: a.routeNo,
+                          routeTp: a.routeType,
+                        })
+                      }
+                    >
+                      {has(a.routeId) ? '추가됨' : '추가'}
+                    </button>
+                  )}
                 </li>
               ))}
             </ul>

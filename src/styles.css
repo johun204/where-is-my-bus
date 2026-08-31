@@ -372,19 +372,18 @@ body {
   font-weight: 700;
 }
 
-/* 정류장 점마커 + 탭영역 */
-.stop-dot {
+/* 정류장 마커(버스 정면 아이콘) + 탭영역 */
+.stop-marker {
   position: relative;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  border: 2px solid #fff;
-  box-shadow: 0 0 2px rgba(0, 0, 0, 0.4);
+  width: 16px;
+  height: 16px;
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.35));
 }
-.stop-dot::after {
+.stop-marker svg { display: block; }
+.stop-marker::after {
   content: '';
   position: absolute;
-  inset: -11px;
+  inset: -12px;
 }
 
 /* 정류장 도착정보 팝업 */
@@ -413,7 +412,19 @@ body {
   font-weight: 800;
   font-size: 13px;
 }
-.arr__body { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.arr__body { flex: 1; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .arr__dir { font-size: 11px; color: #999; }
 .arr__t1 { font-size: 13px; color: #1a2b4a; font-weight: 600; }
 .arr__t2 { font-size: 12px; color: #888; }
+.arr__add {
+  flex: none;
+  align-self: center;
+  border: 0;
+  border-radius: 7px;
+  padding: 7px 12px;
+  background: #eef;
+  color: #3d5bab;
+  font-weight: 700;
+  font-size: 12px;
+}
+.arr__add.is-added { background: #f0f0f0; color: #999; }
