@@ -32,9 +32,11 @@ def _load_handler(filename):
     return mod.handler
 
 
+# api/*.py 중 _ 로 시작하지 않는 파일 전부를 /api/<이름> 으로 (Vercel 라우팅과 동일)
 ROUTES = {
-    "/api/bus-position": _load_handler("bus-position"),
-    "/api/route": _load_handler("route"),
+    f"/api/{p.stem}": _load_handler(p.stem)
+    for p in sorted(HERE.glob("*.py"))
+    if not p.stem.startswith("_")
 }
 
 

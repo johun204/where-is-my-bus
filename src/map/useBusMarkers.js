@@ -51,8 +51,10 @@ export function useBusMarkers(map, route, opts = {}) {
   const busesRef = useRef(new Map()); // vehicleNo -> { overlay, along, speed, refAlong, refTime, samples, gps }
   const clickRef = useRef(null);
   const trackRef = useRef(null);
+  const selRef = useRef(null);
   clickRef.current = opts.onBusClick || null; // 매 렌더 최신값 유지 (오버레이 재생성 없이)
   trackRef.current = opts.trackedVehicleNo || null;
+  selRef.current = opts.selectedVehicleNo || null; // 정보창 열린 버스 → 폴링마다 갱신
 
   useEffect(() => {
     if (!map || !route?.path?.length) return undefined;
@@ -225,6 +227,7 @@ export function useBusMarkers(map, route, opts = {}) {
         st.leadMs = leadMs;
         st.sidx = sidx;
         st.gps = b;
+        if (b.vehicleNo === selRef.current) emitClick(b); // 열린 정보창 갱신
       }
 
       for (const [vno, st] of buses) {

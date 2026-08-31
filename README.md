@@ -13,6 +13,7 @@ api/                    Vercel Python Serverless (서울시 버스 API 프록시
   _util.py              공통: ws.bus.go.kr 호출 + XML 파싱 + 캐시 + 응답 헬퍼
   bus-position.py       GET /api/bus-position?routeId=<busRouteId>     (실시간 위치, getBusPosByRtid)
   route.py              GET /api/route?routeNo=  또는  ?routeId=       (검색 getBusRouteList / 정류장 getStaionByRoute + 도로형상 getRoutePath)
+  arrivals.py           GET /api/arrivals?arsId=<ARS>                  (정류장 도착예정, stationinfo/getStationByUid — 서울시_정류소정보조회 서비스 15000303 활용신청 필요)
 src/
   App.jsx                      모바일 UI(검색바/즐겨찾기 칩/현위치 FAB), 두 손가락 지도 회전(오버사이즈 래퍼 CSS transform), PWA 설치버튼
   map/useMyLocation.js         watchPosition 연속 추적 + 추적 모드(지도 팔로우 + 나침반 방위로 지도 12시 정렬)

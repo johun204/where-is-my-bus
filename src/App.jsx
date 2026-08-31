@@ -54,15 +54,52 @@ export default function App() {
   const [searching, setSearching] = useState(false);
   const [installEvt, setInstallEvt] = useState(null);
   const [coach, setCoach] = useState(() => (seen('search') ? null : 'search'));
-  const [popup, setPopup] = useState(null); // 마커 클릭 시 버스 정보
+  const [popup, setPopup] = useState(null); // 버스 마커 클릭 시 정보
+  const [stopPop, setStopPop] = useState(null); // 정류장 마커 클릭 시 정보
   const [tracked, setTracked] = useState(null); // { routeId, vehicleNo, routeNo } | null
   const prevFavCount = useRef(0);
   const { favorites, has, toggle, toggleEnabled } = useFavoriteRoutes();
 
   const onBusClick = useCallback((info) => {
     setResults(null);
+    setStopPop(null);
     setPopup(info);
   }, []);
+
+  const onStopClick = useCallback((s) => {
+    setResults(null);
+    setPopup(null);
+    setStopPop({ arsId: s.arsId, name: s.name, loading: true, error: false, arrivals: null });
+  }, []);
+
+  // 정류장 도착정보: 열려 있는 동안 20초마다 갱신
+  useEffect(() => {
+    const arsId = stopPop?.arsId;
+    if (!arsId) return undefined;
+    let alive = true;
+    const load = async () => {
+      try {
+        const r = await fetch(`/api/arrivals?arsId=${encodeURIComponent(arsId)}`);
+        const d = await r.json();
+        if (!alive) return;
+        setStopPop((p) =>
+          p && p.arsId === arsId
+            ? Array.isArray(d.arrivals)
+              ? { ...p, loading: false, error: false, arrivals: d.arrivals, name: d.stopName || p.name }
+              : { ...p, loading: false, error: true }
+            : p,
+        );
+      } catch {
+        if (alive) setStopPop((p) => (p && p.arsId === arsId ? { ...p, loading: false, error: true } : p));
+      }
+    };
+    load();
+    const t = setInterval(load, 20000);
+    return () => {
+      alive = false;
+      clearInterval(t);
+    };
+  }, [stopPop?.arsId]);
 
   // 처음 노선을 추가하면 칩(껐다 켜기) 안내
   useEffect(() => {
@@ -109,6 +146,7 @@ export default function App() {
       window.kakao.maps.event.addListener(m, 'click', () => {
         setResults(null);
         setPopup(null);
+        setStopPop(null);
       });
       setMap(m);
     });
@@ -131,6 +169,7 @@ export default function App() {
     exitFollow(); // 내 위치 추적과 상호 배타
     setTracked({ routeId: info.routeId, vehicleNo: info.vehicleNo, routeNo: info.routeNo });
     setPopup(null);
+    setStopPop(null);
   };
 
   const handleFab = () => {
@@ -477,6 +516,45 @@ export default function App() {
         </div>
       )}
 
+      {stopPop && (
+        <div className="buspop stoppop">
+          <button className="buspop__x" onClick={() => setStopPop(null)} aria-label="닫기">
+            ×
+          </button>
+          <div className="buspop__head">
+            <span className="stoppop__pin">■</span>
+            <span className="buspop__veh">{stopPop.name || '정류장'}</span>
+            {stopPop.arsId && <span className="buspop__tag">{stopPop.arsId}</span>}
+          </div>
+          {stopPop.loading && <p className="stoppop__msg">도착 정보를 불러오는 중…</p>}
+          {!stopPop.loading && stopPop.error && (
+            <p className="stoppop__msg">도착 정보를 불러올 수 없어요.</p>
+          )}
+          {!stopPop.loading && !stopPop.error && stopPop.arrivals?.length === 0 && (
+            <p className="stoppop__msg">도착 예정 버스가 없어요.</p>
+          )}
+          {!stopPop.loading && !stopPop.error && stopPop.arrivals?.length > 0 && (
+            <ul className="arr">
+              {stopPop.arrivals.map((a) => (
+                <li key={a.routeId || a.routeNo}>
+                  <span
+                    className="arr__no"
+                    style={{ background: routeTypeColor(a.routeType) }}
+                  >
+                    {a.routeNo}
+                  </span>
+                  <span className="arr__body">
+                    {a.dir && <span className="arr__dir">{a.dir} 방면</span>}
+                    <span className="arr__t1">{a.arr1 ? a.arr1.msg : '정보 없음'}</span>
+                    {a.arr2 && <span className="arr__t2">다음: {a.arr2.msg}</span>}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+
       {map &&
         favorites
           .filter((r) => r.enabled !== false)
@@ -486,8 +564,12 @@ export default function App() {
                 map={map}
                 route={r}
                 onBusClick={onBusClick}
+                onStopClick={onStopClick}
                 trackedVehicleNo={
                   tracked && tracked.routeId === r.routeId ? tracked.vehicleNo : null
+                }
+                selectedVehicleNo={
+                  popup && popup.routeId === r.routeId ? popup.vehicleNo : null
                 }
               />
             </ErrorBoundary>

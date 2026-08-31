@@ -4,7 +4,7 @@ import { routeTypeColor } from './routeColor';
  * 노선 선(Polyline) + 정류장 점마커를 그린다.
  * 반환 함수를 호출하면 모두 제거.
  */
-export function drawRoute(map, route) {
+export function drawRoute(map, route, onStopClick) {
   const { kakao } = window;
   const path = Array.isArray(route?.path) ? route.path : [];
   const stops = Array.isArray(route?.stops) ? route.stops : [];
@@ -22,9 +22,16 @@ export function drawRoute(map, route) {
 
   const dots = stops.map((s) => {
     const el = document.createElement('div');
-    el.style.cssText =
-      `width:8px;height:8px;border-radius:50%;background:${color};` +
-      'border:2px solid #fff;box-shadow:0 0 2px rgba(0,0,0,.4)';
+    el.className = 'stop-dot';
+    el.style.background = color;
+    if (onStopClick && s.arsId && s.arsId !== '0') {
+      el.style.cursor = 'pointer';
+      el.style.pointerEvents = 'auto';
+      el.addEventListener('click', (e) => {
+        e.stopPropagation();
+        onStopClick(s);
+      });
+    }
     const ov = new kakao.maps.CustomOverlay({
       map,
       position: new kakao.maps.LatLng(s.lat, s.lng),

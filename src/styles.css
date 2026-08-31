@@ -371,3 +371,49 @@ body {
   font-size: 14px;
   font-weight: 700;
 }
+
+/* 정류장 점마커 + 탭영역 */
+.stop-dot {
+  position: relative;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  border: 2px solid #fff;
+  box-shadow: 0 0 2px rgba(0, 0, 0, 0.4);
+}
+.stop-dot::after {
+  content: '';
+  position: absolute;
+  inset: -11px;
+}
+
+/* 정류장 도착정보 팝업 */
+.stoppop { max-height: 60vh; overflow-y: auto; }
+.stoppop__pin { color: #3d5bab; font-size: 12px; }
+.stoppop__msg { margin: 6px 2px 0; color: #888; font-size: 13px; }
+.arr {
+  list-style: none;
+  margin: 4px 0 0;
+  padding: 0;
+}
+.arr li {
+  display: flex;
+  gap: 10px;
+  padding: 10px 2px;
+  border-top: 1px solid #eee;
+}
+.arr__no {
+  flex: none;
+  align-self: flex-start;
+  min-width: 40px;
+  text-align: center;
+  padding: 3px 6px;
+  border-radius: 7px;
+  color: #fff;
+  font-weight: 800;
+  font-size: 13px;
+}
+.arr__body { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.arr__dir { font-size: 11px; color: #999; }
+.arr__t1 { font-size: 13px; color: #1a2b4a; font-weight: 600; }
+.arr__t2 { font-size: 12px; color: #888; }
