@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { ErrorBoundary } from './ErrorBoundary';
 import { useFavoriteRoutes } from './hooks/useFavoriteRoutes';
 import { RouteLayer } from './map/RouteLayer';
+import { StopsLayer } from './map/StopsLayer';
 import { routeTypeColor } from './map/routeColor';
 import { useMyLocation } from './map/useMyLocation';
 
@@ -570,6 +571,8 @@ export default function App() {
         </div>
       )}
 
+      {map && <StopsLayer map={map} onStopClick={onStopClick} />}
+
       {map &&
         favorites
           .filter((r) => r.enabled !== false)
@@ -579,7 +582,6 @@ export default function App() {
                 map={map}
                 route={r}
                 onBusClick={onBusClick}
-                onStopClick={onStopClick}
                 trackedVehicleNo={
                   tracked && tracked.routeId === r.routeId ? tracked.vehicleNo : null
                 }

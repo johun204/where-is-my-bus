@@ -10,7 +10,6 @@ export function RouteLayer({
   map,
   route,
   onBusClick,
-  onStopClick,
   trackedVehicleNo,
   selectedVehicleNo,
 }) {
@@ -34,8 +33,8 @@ export function RouteLayer({
 
   useEffect(() => {
     if (!map || !detail) return undefined;
-    return drawRoute(map, detail, onStopClick); // 언마운트 시 정리
-  }, [map, detail, onStopClick]);
+    return drawRoute(map, detail); // 언마운트 시 정리
+  }, [map, detail]);
 
   useBusMarkers(
     map,
