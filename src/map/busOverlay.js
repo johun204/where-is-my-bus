@@ -19,7 +19,7 @@ const innerTransform = (k) => `translate(-50%, -50%) scale(${k})`;
  *  setHeading(deg)      진행방향으로 아이콘만 회전 (멈춰 있어도 항상 표시)
  *  setScale(k)          지도 축척에 맞춰 아이콘·번호 함께 확대축소
  */
-export function createBusOverlay(map, latlng, color, routeNo, scale = 1) {
+export function createBusOverlay(map, latlng, color, routeNo, scale = 1, onClick) {
   const { kakao } = window;
 
   const anchor = document.createElement('div');
@@ -28,6 +28,14 @@ export function createBusOverlay(map, latlng, color, routeNo, scale = 1) {
   const inner = document.createElement('div');
   inner.className = 'bus-ovl';
   inner.style.transform = innerTransform(scale);
+  if (onClick) {
+    inner.style.cursor = 'pointer';
+    inner.style.pointerEvents = 'auto';
+    inner.addEventListener('click', (e) => {
+      e.stopPropagation();
+      onClick();
+    });
+  }
 
   const label = document.createElement('div');
   label.className = 'bus-ovl__no';

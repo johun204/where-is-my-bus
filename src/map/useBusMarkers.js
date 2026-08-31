@@ -47,8 +47,12 @@ function zoomScale(level) {
  *
  * route: { routeId, routeNo, routeTp, path: [[lng,lat], ...] }
  */
-export function useBusMarkers(map, route) {
-  const busesRef = useRef(new Map()); // vehicleNo -> { overlay, along, speed, refAlong, refTime, samples }
+export function useBusMarkers(map, route, opts = {}) {
+  const busesRef = useRef(new Map()); // vehicleNo -> { overlay, along, speed, refAlong, refTime, samples, gps }
+  const clickRef = useRef(null);
+  const trackRef = useRef(null);
+  clickRef.current = opts.onBusClick || null; // 매 렌더 최신값 유지 (오버레이 재생성 없이)
+  trackRef.current = opts.trackedVehicleNo || null;
 
   useEffect(() => {
     if (!map || !route?.path?.length) return undefined;
@@ -70,6 +74,26 @@ export function useBusMarkers(map, route) {
           ).along,
       )
       .sort((a, b) => a - b);
+
+    // 마커 클릭 → 표시용 정보 조립
+    function emitClick(b) {
+      if (!b || !clickRef.current) return;
+      const next = (route.stops || []).find((s) => s.ord === (b.sectOrd || 0) + 1);
+      clickRef.current({
+        routeId: route.routeId,
+        routeNo: route.routeNo,
+        routeTp: route.routeTp,
+        vehicleNo: b.vehicleNo,
+        lowFloor: b.lowFloor,
+        congestion: b.congestion,
+        sectOrd: b.sectOrd,
+        stopFlag: b.stopFlag,
+        nextStTm: b.nextStTm,
+        dataTm: b.dataTm,
+        nextStopName: next ? next.name : null,
+      });
+    }
+
     let alive = true;
     let raf = 0;
     let lastFrame = performance.now();
@@ -82,12 +106,13 @@ export function useBusMarkers(map, route) {
     kakao.maps.event.addListener(map, 'zoom_changed', onZoom);
 
     // 연속 rAF 루프: 매 프레임 평균속도로 전진 + 예측치로 수렴
+    let lastTrackCenter = 0;
     function frame(now) {
       if (!alive) return;
       const dt = Math.min(0.1, (now - lastFrame) / 1000); // 탭 복귀 시 폭주 방지
       lastFrame = now;
       const k = 1 - Math.exp(-dt / SMOOTH_TAU);
-      for (const st of buses.values()) {
+      for (const [vno, st] of buses) {
         // 수신 후 경과 + 수신 시점의 데이터 지연 = 실제 '현재'까지의 시간
         const t = Math.min(
           (now - st.refTime) / 1000 + (st.leadMs ?? LEAD_FALLBACK_MS) / 1000,
@@ -101,9 +126,15 @@ export function useBusMarkers(map, route) {
         );
         st.along += (predicted - st.along) * k;
         const p = pointAtDistance(path, st.along);
-        st.overlay.setPosition(new kakao.maps.LatLng(p.lat, p.lng));
+        const ll = new kakao.maps.LatLng(p.lat, p.lng);
+        st.overlay.setPosition(ll);
         // 경로 접선 방위 = 진행방향. 속도 0이어도 항상 세팅되므로 멈춰 있어도 방향 표시됨
         st.overlay.setHeading(p.heading);
+        // 위치 트래킹: 이 버스가 대상이면 지도 중심을 계속 맞춤 (기울이지 않음)
+        if (vno === trackRef.current && now - lastTrackCenter > 80) {
+          map.setCenter(ll);
+          lastTrackCenter = now;
+        }
       }
       raf = requestAnimationFrame(frame);
     }
@@ -152,14 +183,19 @@ export function useBusMarkers(map, route) {
 
         if (!st) {
           const p0 = pointAtDistance(path, proj.along);
+          const vno = b.vehicleNo;
           const overlay = createBusOverlay(
             map,
             new kakao.maps.LatLng(p0.lat, p0.lng),
             color,
             route.routeNo,
             scale,
+            () => {
+              const cur = buses.get(vno);
+              if (cur) emitClick(cur.gps);
+            },
           );
-          buses.set(b.vehicleNo, {
+          buses.set(vno, {
             overlay,
             along: proj.along,
             speed: 0,
@@ -167,6 +203,7 @@ export function useBusMarkers(map, route) {
             refTime: now,
             leadMs,
             sidx,
+            gps: b,
             samples: [{ along: proj.along, t: now }],
           });
           continue;
@@ -187,6 +224,7 @@ export function useBusMarkers(map, route) {
         st.refTime = now;
         st.leadMs = leadMs;
         st.sidx = sidx;
+        st.gps = b;
       }
 
       for (const [vno, st] of buses) {

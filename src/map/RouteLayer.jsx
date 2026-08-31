@@ -6,7 +6,7 @@ import { useBusMarkers } from './useBusMarkers';
  * 즐겨찾기 노선 하나를 지도에 얹는다: 경로선 + 정류장 점 + 실시간 버스.
  * route: { routeId, routeNo, routeTp }
  */
-export function RouteLayer({ map, route }) {
+export function RouteLayer({ map, route, onBusClick, trackedVehicleNo }) {
   const [detail, setDetail] = useState(null); // { path, stops, routeTp }
 
   useEffect(() => {
@@ -33,6 +33,7 @@ export function RouteLayer({ map, route }) {
   useBusMarkers(
     map,
     detail && { ...detail, routeId: route.routeId, routeNo: route.routeNo },
+    { onBusClick, trackedVehicleNo },
   );
 
   return null;

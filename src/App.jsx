@@ -22,6 +22,23 @@ const markSeen = (k) => {
   }
 };
 
+const CONGESTION = { 3: '여유', 4: '보통', 5: '혼잡', 6: '매우 혼잡' };
+const agoText = (dataTm) => {
+  if (!/^\d{14}$/.test(dataTm || '')) return null;
+  const s = dataTm;
+  const epoch = Date.UTC(
+    +s.slice(0, 4), +s.slice(4, 6) - 1, +s.slice(6, 8),
+    +s.slice(8, 10) - 9, +s.slice(10, 12), +s.slice(12, 14),
+  );
+  const sec = Math.round((Date.now() - epoch) / 1000);
+  if (sec < 0 || sec > 3600) return null;
+  return sec < 60 ? `${sec}초 전` : `${Math.floor(sec / 60)}분 전`;
+};
+const etaText = (t) => {
+  if (t == null || t < 0) return null;
+  return t < 60 ? `${t}초` : `약 ${Math.round(t / 60)}분`;
+};
+
 export default function App() {
   const mapEl = useRef(null);
   const rotEl = useRef(null); // 회전 래퍼 (--map-rot CSS 변수 소유)
@@ -37,8 +54,15 @@ export default function App() {
   const [searching, setSearching] = useState(false);
   const [installEvt, setInstallEvt] = useState(null);
   const [coach, setCoach] = useState(() => (seen('search') ? null : 'search'));
+  const [popup, setPopup] = useState(null); // 마커 클릭 시 버스 정보
+  const [tracked, setTracked] = useState(null); // { routeId, vehicleNo, routeNo } | null
   const prevFavCount = useRef(0);
   const { favorites, has, toggle, toggleEnabled } = useFavoriteRoutes();
+
+  const onBusClick = useCallback((info) => {
+    setResults(null);
+    setPopup(info);
+  }, []);
 
   // 처음 노선을 추가하면 칩(껐다 켜기) 안내
   useEffect(() => {
@@ -82,7 +106,10 @@ export default function App() {
         center: new window.kakao.maps.LatLng(FALLBACK.lat, FALLBACK.lng),
         level: 4,
       });
-      window.kakao.maps.event.addListener(m, 'click', () => setResults(null));
+      window.kakao.maps.event.addListener(m, 'click', () => {
+        setResults(null);
+        setPopup(null);
+      });
       setMap(m);
     });
   }, []);
@@ -90,6 +117,26 @@ export default function App() {
   useEffect(() => {
     followRef.current = follow;
   }, [follow]);
+
+  // 버스 위치 트래킹 중 지도를 직접 드래그하면 해제
+  useEffect(() => {
+    if (!map || !tracked) return undefined;
+    const { kakao } = window;
+    const release = () => setTracked(null);
+    kakao.maps.event.addListener(map, 'dragstart', release);
+    return () => kakao.maps.event.removeListener(map, 'dragstart', release);
+  }, [map, tracked]);
+
+  const startTrack = (info) => {
+    exitFollow(); // 내 위치 추적과 상호 배타
+    setTracked({ routeId: info.routeId, vehicleNo: info.vehicleNo, routeNo: info.routeNo });
+    setPopup(null);
+  };
+
+  const handleFab = () => {
+    setTracked(null);
+    onFab();
+  };
 
   // 추적 해제 시(드래그/줌 등) 정북으로 복귀 — 단, 사용자가 직접 돌린 각도는 유지
   useEffect(() => {
@@ -166,6 +213,7 @@ export default function App() {
           pan = null;
           return;
         }
+        setTracked(null); // 직접 이동 → 트래킹 해제
         e.stopPropagation();
         e.preventDefault();
         const t = e.touches[0];
@@ -203,6 +251,7 @@ export default function App() {
         if (m < 4 || m > 356) r = Math.round(r / 360) * 360; // 정북 근처 스냅
         applyRot(r, 'manual');
         exitFollow();
+        setTracked(null); // tilt → 트래킹 해제
         return;
       }
 
@@ -284,6 +333,17 @@ export default function App() {
       </div>
 
       <div className="topbar">
+        {tracked && (
+          <div className="trackbar">
+            <span>
+              <b>{tracked.routeNo}</b> {tracked.vehicleNo} 따라가는 중
+            </span>
+            <button type="button" onClick={() => setTracked(null)}>
+              해제
+            </button>
+          </div>
+        )}
+
         <form className="search" onSubmit={search}>
           <input
             value={query}
@@ -365,18 +425,71 @@ export default function App() {
 
       <button
         className={`fab${follow ? ' fab--follow' : ''}`}
-        onClick={onFab}
+        onClick={handleFab}
         aria-label="현재 위치"
       >
         ◎
       </button>
+
+      {popup && (
+        <div className="buspop">
+          <button className="buspop__x" onClick={() => setPopup(null)} aria-label="닫기">
+            ×
+          </button>
+          <div className="buspop__head">
+            <span
+              className="buspop__badge"
+              style={{ background: routeTypeColor(popup.routeTp) }}
+            >
+              {popup.routeNo}
+            </span>
+            <span className="buspop__veh">{popup.vehicleNo}</span>
+            {popup.lowFloor && <span className="buspop__tag">저상</span>}
+          </div>
+          <dl className="buspop__info">
+            {popup.nextStopName && (
+              <>
+                <dt>다음 정류장</dt>
+                <dd>
+                  {popup.nextStopName}
+                  {etaText(popup.nextStTm) ? ` · ${etaText(popup.nextStTm)}` : ''}
+                </dd>
+              </>
+            )}
+            <dt>혼잡도</dt>
+            <dd>{CONGESTION[popup.congestion] || '정보 없음'}</dd>
+            {popup.stopFlag === 1 && (
+              <>
+                <dt>상태</dt>
+                <dd>정류장 정차 중</dd>
+              </>
+            )}
+            {agoText(popup.dataTm) && (
+              <>
+                <dt>위치 기준</dt>
+                <dd>{agoText(popup.dataTm)}</dd>
+              </>
+            )}
+          </dl>
+          <button className="buspop__track" onClick={() => startTrack(popup)}>
+            이 버스 위치 트래킹
+          </button>
+        </div>
+      )}
 
       {map &&
         favorites
           .filter((r) => r.enabled !== false)
           .map((r) => (
             <ErrorBoundary key={r.routeId} fallback={null}>
-              <RouteLayer map={map} route={r} />
+              <RouteLayer
+                map={map}
+                route={r}
+                onBusClick={onBusClick}
+                trackedVehicleNo={
+                  tracked && tracked.routeId === r.routeId ? tracked.vehicleNo : null
+                }
+              />
             </ErrorBoundary>
           ))}
     </div>
