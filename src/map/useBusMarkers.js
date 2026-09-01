@@ -231,6 +231,10 @@ export function useBusMarkers(map, route, opts = {}) {
           st.samples.push({ along: proj.along, t: now });
           if (st.samples.length > WINDOW) st.samples.shift();
           recalcSpeed(st);
+          // 방금 받은 위치는 leadMs 전의 것 → 지연보정 지점으로 즉시 부분 반영
+          // (정확히 예측 중이었다면 corr ≈ 현재 표시위치라 튀지 않음)
+          const corr = leadAlong(proj.along, st.speed, leadMs / 1000, stopAlongs, sidx);
+          st.along += (corr - st.along) * 0.6;
         }
         st.refAlong = proj.along;
         st.refTime = now;
