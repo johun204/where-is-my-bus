@@ -12,14 +12,32 @@ const WINDOW = 3; // 평균속도를 낼 때 쓰는 최근 fetch 개수 (짧을�
 const SNAP_M = 120; // 경로에서 이만큼 벗어난 좌표는 보정 없이 스냅 (도로 형상 기준)
 const JUMP_M = 3000; // 경로상 이만큼 튀면(순환노선 한 바퀴 등) 스냅
 const MAX_SPEED = 18; // m/s (~65km/h) 평균속도 상한
-const SMOOTH_TAU = 1.0; // s. 화면 위치가 예측 위치로 수렴하는 시간상수
-const STOP_SPEED = 0.8; // m/s 미만이면 '정차'
-const MOVING_SPEED = 2.0; // m/s 이상이면 '주행'. 그 사이는 '서행'
-const CRAWL_CAP_S = 4; // 서행 시 외삽 시간 상한(초)
-const CRAWL_MAX_M = 18; // 서행 시 다음 실측 전까지 전진 상한(m)
-const FREEZE_AGE_S = 16; // 데이터가 이보다 오래되면 미지의 미래로 밀지 않고 정지
+
+// 부드러운 팔로워 (속도 기반, 가속도 제한 → 끊김 없음)
+const V_STOP = 0.7; // m/s 미만이면 '정차'로 분류 (가중속도 기준)
+const LOOKAHEAD_S = 1.6; // 목표위치까지 남은 거리를 이 시간에 나눈 값이 목표속도
+const VEL_TAU = 0.9; // s. 속도가 목표속도로 수렴하는 시간상수(=가속도 제한)
+const V_CATCHUP = 5.0; // m/s. 정차/DEPART/데이터끊김 상태에서 위치 따라잡기 상한
+const FREEZE_AGE_S = 18; // 데이터가 이보다 오래되면 그 자리에서 감속 정지
+const AT_STOP_M = 14; // 같은 정류장 정차로 볼 거리(m)
+const T_DEPART_START = 28; // s. 정류장(stopFlag=1)에서 이만큼 계속 정차면 출발 추정 시작
+const V_DEPART = 2.0; // m/s. 출발 추정 시 미는 속도
+const D_DEPART_MAX = 35; // m. 실측 확인 전까지 정류장에서 이만큼까지만
 
 const clamp = (v, lo, hi) => (v < lo ? lo : v > hi ? hi : v);
+
+// stopAlongs(오름차순)에서 along 에 가장 가까운 정류장 위치 (sidx 주변만)
+function nearestStop(stopAlongs, along, sidx) {
+  if (!stopAlongs.length) return null;
+  const i = Math.min(Math.max(sidx, 0), stopAlongs.length - 1);
+  let best = null;
+  for (const j of [i - 1, i, i + 1]) {
+    if (j < 0 || j >= stopAlongs.length) continue;
+    const d = Math.abs(stopAlongs[j] - along);
+    if (!best || d < best.dist) best = { along: stopAlongs[j], dist: d };
+  }
+  return best;
+}
 
 // dataTm(KST yyyyMMddHHmmss) → 지금 이 데이터가 얼마나 지난 것인지(ms).
 // 기기 시계가 어긋나 값이 비정상이면 기본값 사용.
@@ -112,53 +130,58 @@ export function useBusMarkers(map, route, opts = {}) {
     };
     kakao.maps.event.addListener(map, 'zoom_changed', onZoom);
 
-    // 연속 rAF 루프: 매 프레임 평균속도로 전진 + 예측치로 수렴
+    // 연속 rAF 루프: 매 프레임 목표위치(pDes)를 향해 부드럽게(속도 가속도 제한) 이동
     let lastTrackCenter = 0;
     function frame(now) {
       if (!alive) return;
       const dt = Math.min(0.1, (now - lastFrame) / 1000); // 탭 복귀 시 폭주 방지
       lastFrame = now;
-      const k = 1 - Math.exp(-dt / SMOOTH_TAU);
+      const kv = 1 - Math.exp(-dt / VEL_TAU);
+
       for (const [vno, st] of buses) {
-        // 이 데이터가 실제 '지금'까지 얼마나 지난 것인지 (수신 후 경과 + 데이터 지연)
         const ageSec =
           (now - st.refTime) / 1000 + (st.leadMs ?? LEAD_FALLBACK_MS) / 1000;
         const sidx = st.sidx || 0;
 
-        let predicted;
+        // 국면별 목표위치 pDes + 속도 상한 vCap
+        let pDes;
+        let vCap = V_CATCHUP;
         if (ageSec > FREEZE_AGE_S) {
-          // 갱신이 오래 끊김 → 미지의 미래로 계속 밀지 않고 현재 자리에 정지
-          predicted = st.along;
-        } else if (st.speed < STOP_SPEED) {
-          // 정차: 정류장 도착(stopFlag=1)이든 신호/정체(stopFlag=0)든
-          // 마지막 실측 위치에 고정. (출발은 다음 실측이 확인해 준다)
-          predicted = st.refAlong;
-        } else if (st.speed < MOVING_SPEED) {
-          // 서행(가감속/정체): 짧게만, 조금만 외삽
-          predicted = Math.min(
-            leadAlong(st.refAlong, st.speed, Math.min(ageSec, CRAWL_CAP_S), stopAlongs, sidx),
-            st.refAlong + CRAWL_MAX_M,
-          );
+          pDes = st.along; // 데이터 사망 → 현재 자리
+        } else if (st.phase === 'DWELL') {
+          const held = (now - st.phaseSince) / 1000;
+          pDes =
+            held < T_DEPART_START
+              ? st.dwellAlong // 승하차 중 — 정류장에 정지
+              : st.dwellAlong + Math.min(V_DEPART * (held - T_DEPART_START), D_DEPART_MAX);
+        } else if (st.phase === 'HALT') {
+          pDes = st.haltAlong; // 신호/정체 (교차로 옆 정류장 포함) — 실측 위치에 정지
         } else {
-          // 주행: 정상 추측항법 (앞 정류장 정차시간은 leadAlong 이 반영)
-          predicted = leadAlong(
+          // RUN: 도로형상 따라 데이터 지연만큼 앞선 위치
+          pDes = leadAlong(
             st.refAlong,
             st.speed,
             Math.min(ageSec, MAX_EXTRAP_MS / 1000),
             stopAlongs,
             sidx,
           );
+          vCap = Math.min(st.speed * 1.5 + 1.5, MAX_SPEED);
         }
-        predicted = clamp(predicted, 0, path.total);
-        const before = st.along;
-        st.along += (predicted - before) * k;
-        if (st.along < before) st.along = before; // 경로상 뒤로 가지 않음(멈춤은 허용)
+        pDes = clamp(pDes, 0, path.total);
+
+        // 순수추종: 목표까지 남은 거리를 LOOKAHEAD_S 로 나눈 값이 목표속도(뒤로는 0)
+        let vDes = (pDes - st.along) / LOOKAHEAD_S;
+        if (vDes < 0) vDes = 0;
+        if (vDes > vCap) vDes = vCap;
+
+        st.vel += (vDes - st.vel) * kv; // 가속도 제한 → 부드러움
+        if (st.vel < 0) st.vel = 0;
+        st.along = clamp(st.along + st.vel * dt, 0, path.total);
+
         const p = pointAtDistance(path, st.along);
         const ll = new kakao.maps.LatLng(p.lat, p.lng);
         st.overlay.setPosition(ll);
-        // 경로 접선 방위 = 진행방향. 속도 0이어도 항상 세팅되므로 멈춰 있어도 방향 표시됨
         st.overlay.setHeading(p.heading);
-        // 위치 트래킹: 이 버스가 대상이면 지도 중심을 계속 맞춤 (기울이지 않음)
         if (vno === trackRef.current && now - lastTrackCenter > 80) {
           map.setCenter(ll);
           lastTrackCenter = now;
@@ -236,12 +259,17 @@ export function useBusMarkers(map, route, opts = {}) {
           buses.set(vno, {
             overlay,
             along: proj.along,
+            vel: 0,
             speed: 0,
             refAlong: proj.along,
             refTime: now,
             leadMs,
             sidx,
             gps: b,
+            phase: b.stopFlag === 1 ? 'DWELL' : 'RUN',
+            phaseSince: now,
+            dwellAlong: proj.along,
+            haltAlong: proj.along,
             samples: [{ along: proj.along, t: now }],
           });
           continue;
@@ -249,8 +277,11 @@ export function useBusMarkers(map, route, opts = {}) {
 
         const last = st.samples[st.samples.length - 1];
         if (proj.dist > SNAP_M || Math.abs(proj.along - last.along) > JUMP_M) {
-          // 경로 이탈 / 순환 한 바퀴 → 스냅 후 윈도우 초기화
+          // 경로 이탈 / 순환 한 바퀴 → 하드 스냅
           st.along = proj.along;
+          st.vel = 0;
+          st.phase = 'RUN';
+          st.phaseSince = now;
           st.samples = [{ along: proj.along, t: now }];
           st.speed = 0;
         } else {
@@ -258,10 +289,26 @@ export function useBusMarkers(map, route, opts = {}) {
           if (st.samples.length > WINDOW) st.samples.shift();
           recalcSpeed(st);
 
-          // 주행 중일 때만: 방금 받은 위치는 leadMs 전 것 → 지연보정 지점으로 즉시 부분 반영(앞으로만).
-          if (st.speed >= MOVING_SPEED) {
-            const corr = leadAlong(proj.along, st.speed, leadMs / 1000, stopAlongs, sidx);
-            if (corr > st.along) st.along += (corr - st.along) * 0.4;
+          // 국면 판정
+          const stopped = st.speed < V_STOP;
+          if (stopped && b.stopFlag === 1) {
+            // 정류장 도착·정차(승하차)
+            const near = nearestStop(stopAlongs, proj.along, sidx);
+            const at = near ? near.along : proj.along;
+            if (st.phase !== 'DWELL' || Math.abs(st.dwellAlong - at) > AT_STOP_M) {
+              st.phase = 'DWELL';
+              st.phaseSince = now; // 새 정류장 정차 시작
+              st.dwellAlong = at;
+            }
+            // 같은 정류장이면 phaseSince 유지 → 정차시간 누적
+          } else if (stopped) {
+            // 정차인데 도착 아님 → 신호/정체 (교차로·신호등 옆 정류장 포함)
+            st.phase = 'HALT';
+            st.haltAlong = proj.along;
+            st.phaseSince = now;
+          } else {
+            st.phase = 'RUN';
+            st.phaseSince = now;
           }
         }
         st.refAlong = proj.along;
