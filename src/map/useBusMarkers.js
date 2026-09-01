@@ -13,8 +13,26 @@ const SNAP_M = 120; // 경로에서 이만큼 벗어난 좌표는 보정 없이 
 const JUMP_M = 3000; // 경로상 이만큼 튀면(순환노선 한 바퀴 등) 스냅
 const MAX_SPEED = 18; // m/s (~65km/h) 평균속도 상한
 const SMOOTH_TAU = 1.0; // s. 화면 위치가 예측 위치로 수렴하는 시간상수
+const STOP_SPEED = 0.6; // m/s 미만이면 '정차'로 간주
+const AT_STOP_M = 10; // 정류장 이 거리 안에서 정차 = 승하차 정차
+const DWELL_HOLD_S = 12; // 정류장 정차가 이 시간 넘으면 '출발한 것'으로 보고 전진 시작
+const DEPART_SPEED = 3.5; // m/s 출발 후 다음 실측 전까지 천천히 미는 속도
+const DEPART_MAX_M = 35; // 다음 실측 없이 정류장에서 이만큼까지만 전진
 
 const clamp = (v, lo, hi) => (v < lo ? lo : v > hi ? hi : v);
+
+// stopAlongs(오름차순)에서 along 에 가장 가까운 정류장 위치 (sidx 주변만 확인)
+function nearestStop(stopAlongs, along, sidx) {
+  if (!stopAlongs.length) return null;
+  const i = Math.min(Math.max(sidx, 0), stopAlongs.length - 1);
+  let best = null;
+  for (const j of [i - 1, i, i + 1]) {
+    if (j < 0 || j >= stopAlongs.length) continue;
+    const d = Math.abs(stopAlongs[j] - along);
+    if (!best || d < best.dist) best = { along: stopAlongs[j], dist: d };
+  }
+  return best;
+}
 
 // dataTm(KST yyyyMMddHHmmss) → 지금 이 데이터가 얼마나 지난 것인지(ms).
 // 기기 시계가 어긋나 값이 비정상이면 기본값 사용.
@@ -115,17 +133,29 @@ export function useBusMarkers(map, route, opts = {}) {
       lastFrame = now;
       const k = 1 - Math.exp(-dt / SMOOTH_TAU);
       for (const [vno, st] of buses) {
-        // 수신 후 경과 + 수신 시점의 데이터 지연 = 실제 '현재'까지의 시간
-        const t = Math.min(
-          (now - st.refTime) / 1000 + (st.leadMs ?? LEAD_FALLBACK_MS) / 1000,
-          MAX_EXTRAP_MS / 1000,
-        );
-        // 그만큼 앞선 위치 — 단 앞의 정류장에서 정차 시간을 빼서 지나치지 않게
-        const predicted = clamp(
-          leadAlong(st.refAlong, st.speed, t, stopAlongs, st.sidx || 0),
-          0,
-          path.total,
-        );
+        let predicted;
+        if (st.dwell) {
+          // 정류장 정차 중
+          const held = (now - st.dwell.since) / 1000;
+          predicted =
+            held < DWELL_HOLD_S
+              ? st.dwell.stopAlong // 승하차 중 — 정류장에 고정
+              : Math.min(
+                  // 오래 섰다 → 출발한 것으로 보고 정류장에서부터 천천히 전진(상한)
+                  st.dwell.stopAlong + DEPART_SPEED * (held - DWELL_HOLD_S),
+                  st.dwell.stopAlong + DEPART_MAX_M,
+                );
+        } else if (st.speed < STOP_SPEED) {
+          predicted = st.refAlong; // 일반 도로 정차(신호 등) — 그 자리
+        } else {
+          // 수신 후 경과 + 데이터 지연만큼 앞선 위치 (앞 정류장 정차시간은 leadAlong 이 반영)
+          const t = Math.min(
+            (now - st.refTime) / 1000 + (st.leadMs ?? LEAD_FALLBACK_MS) / 1000,
+            MAX_EXTRAP_MS / 1000,
+          );
+          predicted = leadAlong(st.refAlong, st.speed, t, stopAlongs, st.sidx || 0);
+        }
+        predicted = clamp(predicted, 0, path.total);
         const before = st.along;
         st.along += (predicted - before) * k;
         if (st.along < before) st.along = before; // 경로상 뒤로 가지 않음(멈춤은 허용)
@@ -218,6 +248,7 @@ export function useBusMarkers(map, route, opts = {}) {
             leadMs,
             sidx,
             gps: b,
+            dwell: null,
             samples: [{ along: proj.along, t: now }],
           });
           continue;
@@ -229,14 +260,27 @@ export function useBusMarkers(map, route, opts = {}) {
           st.along = proj.along;
           st.samples = [{ along: proj.along, t: now }];
           st.speed = 0;
+          st.dwell = null;
         } else {
           st.samples.push({ along: proj.along, t: now });
           if (st.samples.length > WINDOW) st.samples.shift();
           recalcSpeed(st);
-          // 방금 받은 위치는 leadMs 전의 것 → 지연보정 지점으로 즉시 부분 반영.
-          // 단 앞으로만(뒤로 당기지 않음). 예측이 정확했다면 corr ≈ 현재 표시위치.
-          const corr = leadAlong(proj.along, st.speed, leadMs / 1000, stopAlongs, sidx);
-          if (corr > st.along) st.along += (corr - st.along) * 0.6;
+
+          // 정차 상태 판정: 일반 도로 vs 정류장 10m 내
+          const near = nearestStop(stopAlongs, proj.along, sidx);
+          if (st.speed < STOP_SPEED && near && near.dist <= AT_STOP_M) {
+            if (!st.dwell || Math.abs(st.dwell.stopAlong - near.along) > AT_STOP_M) {
+              st.dwell = { stopAlong: near.along, since: now }; // 새 정류장 정차 시작
+            }
+          } else {
+            st.dwell = null;
+          }
+
+          // 방금 받은 위치는 leadMs 전의 것 → 지연보정 지점으로 즉시 부분 반영(앞으로만).
+          if (!st.dwell && st.speed >= STOP_SPEED) {
+            const corr = leadAlong(proj.along, st.speed, leadMs / 1000, stopAlongs, sidx);
+            if (corr > st.along) st.along += (corr - st.along) * 0.6;
+          }
         }
         st.refAlong = proj.along;
         st.refTime = now;
