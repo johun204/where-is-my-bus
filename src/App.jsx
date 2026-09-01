@@ -36,7 +36,7 @@ const agoText = (dataTm) => {
   return sec < 60 ? `${sec}초 전` : `${Math.floor(sec / 60)}분 전`;
 };
 const etaText = (t) => {
-  if (t == null || t < 0) return null;
+  if (t == null || t < 0 || t > 1800) return null; // 이 endpoint 의 nextStTm 은 종종 비정상
   return t < 60 ? `${t}초` : `약 ${Math.round(t / 60)}분`;
 };
 

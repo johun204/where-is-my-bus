@@ -14,6 +14,13 @@ def _int(v):
         return None
 
 
+def _float(v):
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return None
+
+
 class handler(BaseHTTPRequestHandler):
     def do_GET(self):
         try:
@@ -38,9 +45,11 @@ class handler(BaseHTTPRequestHandler):
                 "lat": float(it["gpsY"]),
                 "lng": float(it["gpsX"]),
                 "sectOrd": _int(it.get("sectOrd")),  # 현재 구간 순번
+                "sectDist": _float(it.get("sectDist")),  # 현 구간에서 이동한 거리(km)
+                "fullSectDist": _float(it.get("fullSectDist")),  # 현 구간 전체 길이(km)
                 "dataTm": it.get("dataTm"),  # 위치 갱신시각 yyyyMMddHHmmss (KST) — 지연 보정용
                 "stopFlag": _int(it.get("stopFlag")),  # 1이면 정류소 도착/정차 상태
-                "nextStTm": _int(it.get("nextStTm")),  # 다음 정류소까지 예상 소요(초)
+                "nextStTm": _int(it.get("nextStTm")),  # 다음 정류소까지 예상 소요(초, 이 endpoint 는 부정확)
                 "lowFloor": it.get("busType") == "1",
                 "congestion": _int(it.get("congetion")),  # API 스펙상 철자 그대로
             }
