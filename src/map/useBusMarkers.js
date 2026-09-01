@@ -142,16 +142,26 @@ export function useBusMarkers(map, route, opts = {}) {
     }
     raf = requestAnimationFrame(frame);
 
-    // 최근 WINDOW개 샘플의 처음~끝 구간으로 평균속도 산출
+    // 최근 WINDOW개 샘플의 구간별 속도를 최근일수록 크게 가중평균.
+    // → 최근 두 구간이 정지면(신호대기) 속도 ≈ 0, 마지막만 정지면(정류장 승하차)
+    //   직전 구간 속도가 일부 남아 살짝만 보정.
     function recalcSpeed(st) {
-      if (st.samples.length < 2) {
+      const s = st.samples;
+      if (s.length < 2) {
         st.speed = 0;
         return;
       }
-      const a = st.samples[0];
-      const b = st.samples[st.samples.length - 1];
-      const dtSec = (b.t - a.t) / 1000;
-      st.speed = dtSec > 0 ? clamp((b.along - a.along) / dtSec, 0, MAX_SPEED) : 0;
+      let wsum = 0;
+      let vsum = 0;
+      for (let i = 1; i < s.length; i++) {
+        const dt = (s[i].t - s[i - 1].t) / 1000;
+        if (dt <= 0) continue;
+        const v = clamp((s[i].along - s[i - 1].along) / dt, 0, MAX_SPEED);
+        const w = i; // 1, 2, 3 … 최근 구간일수록 큰 가중치
+        wsum += w;
+        vsum += w * v;
+      }
+      st.speed = wsum > 0 ? vsum / wsum : 0;
     }
 
     async function poll() {
