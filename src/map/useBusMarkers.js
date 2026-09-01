@@ -5,7 +5,7 @@ import { routeTypeColor } from './routeColor';
 
 const FAST_MS = 3000; // 접속 직후: 이 간격으로
 const FAST_COUNT = 3; // 이만큼 fetch 해서 평균속도를 빨리 확보한 뒤
-const SLOW_MS = 10000; // 이후 통상 폴링 주기
+const SLOW_MS = 6000; // 이후 통상 폴링 주기
 const MAX_EXTRAP_MS = 25000; // 응답이 늦어도 이 시간까지만 외삽(지연보정 포함)
 const LEAD_FALLBACK_MS = 7000; // dataTm 없거나 시계 어긋날 때 기본 지연 추정치
 const WINDOW = 3; // 평균속도를 낼 때 쓰는 최근 fetch 개수 (짧을수록 최근 움직임에 민감)
@@ -126,7 +126,9 @@ export function useBusMarkers(map, route, opts = {}) {
           0,
           path.total,
         );
-        st.along += (predicted - st.along) * k;
+        const before = st.along;
+        st.along += (predicted - before) * k;
+        if (st.along < before) st.along = before; // 경로상 뒤로 가지 않음(멈춤은 허용)
         const p = pointAtDistance(path, st.along);
         const ll = new kakao.maps.LatLng(p.lat, p.lng);
         st.overlay.setPosition(ll);
@@ -231,10 +233,10 @@ export function useBusMarkers(map, route, opts = {}) {
           st.samples.push({ along: proj.along, t: now });
           if (st.samples.length > WINDOW) st.samples.shift();
           recalcSpeed(st);
-          // 방금 받은 위치는 leadMs 전의 것 → 지연보정 지점으로 즉시 부분 반영
-          // (정확히 예측 중이었다면 corr ≈ 현재 표시위치라 튀지 않음)
+          // 방금 받은 위치는 leadMs 전의 것 → 지연보정 지점으로 즉시 부분 반영.
+          // 단 앞으로만(뒤로 당기지 않음). 예측이 정확했다면 corr ≈ 현재 표시위치.
           const corr = leadAlong(proj.along, st.speed, leadMs / 1000, stopAlongs, sidx);
-          st.along += (corr - st.along) * 0.6;
+          if (corr > st.along) st.along += (corr - st.along) * 0.6;
         }
         st.refAlong = proj.along;
         st.refTime = now;

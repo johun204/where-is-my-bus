@@ -1,5 +1,5 @@
 // 앱 셸 캐시 + HTML은 네트워크 우선(배포 즉시 반영). 지도/API는 항상 네트워크.
-const CACHE = 'busmap-v19';
+const CACHE = 'busmap-v20';
 const SHELL = ['/', '/index.html', '/manifest.webmanifest'];
 
 self.addEventListener('install', (e) => {
