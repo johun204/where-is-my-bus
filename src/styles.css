@@ -381,9 +381,10 @@ body {
 }
 .stop-marker svg { display: block; }
 .stop-marker::after {
+  /* 탭 영역 (겹친 버스보다 정류장이 먼저 눌리도록 zIndex 6, 단 근처 버스까지 가리지 않게 타이트) */
   content: '';
   position: absolute;
-  inset: -12px;
+  inset: -7px;
 }
 
 /* 정류장 도착정보 팝업 */

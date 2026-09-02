@@ -81,7 +81,7 @@ export function StopsLayer({ map, onStopClick }) {
             content: el,
             xAnchor: 0.5,
             yAnchor: 0.5,
-            zIndex: 2,
+            zIndex: 6, // 버스 마커(5)보다 위 → 겹치면 정류장이 먼저 눌림
           }),
         );
       }
