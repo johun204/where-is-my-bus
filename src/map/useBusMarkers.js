@@ -22,6 +22,8 @@ const DEPART_V = 4; // m/s 정류장 출발 가정 속도
 const VSHOW_TAU = 0.6; // s 표시속도 평활
 const CORR_TAU = 0.9; // s 위치오차 보정 시간상수 (짧을수록 빨리 따라잡음)
 const CORR_MAX = 10; // m/s 위치오차 보정 상한(표시속도에 더해지는 최대)
+const INITIAL_SPEED = 5; // m/s 새 버스의 초기 속도 추정(첫 fix 라 실측 속도 없음)
+const RESTORE_MAX_MS = 25000; // 새로고침 복원: 저장상태가 이보다 오래되면 무시
 
 const clamp = (v, lo, hi) => (v < lo ? lo : v > hi ? hi : v);
 
@@ -130,6 +132,23 @@ export function useBusMarkers(map, route, opts = {}) {
         ).along,
     );
     const stopSorted = [...stopByOrd].sort((a, b) => a - b);
+
+    // 새로고침 복원: 직전 세션이 예측하던 위치·속도를 sessionStorage 에서 되살림.
+    // (없으면 새 버스는 INITIAL_SPEED 로 시드 → 첫 프레임부터 지연분만큼 앞서 표시)
+    const SS_KEY = `busmarkers.${route.routeId}`;
+    const restored = new Map();
+    try {
+      const raw = JSON.parse(sessionStorage.getItem(SS_KEY) || 'null');
+      if (raw && Date.now() - raw.t < RESTORE_MAX_MS) {
+        const age = (Date.now() - raw.t) / 1000;
+        for (const k in raw.b) {
+          const [sp, al] = raw.b[k];
+          restored.set(k, { speed: sp, along: al + sp * age }); // 저장 후 흐른 시간만큼 전진
+        }
+      }
+    } catch {
+      /* 무시 */
+    }
 
     function emitClick(b) {
       if (!b || !clickRef.current) return;
@@ -256,7 +275,12 @@ export function useBusMarkers(map, route, opts = {}) {
         const leadMs = b.stopFlag === 1 ? 0 : lag; // 예측 전진에 쓰는 지연(도착중이면 0)
 
         if (!st) {
-          const p0 = pointAtDistance(path, a0);
+          // 실측 속도가 아직 없으므로: 복원값 있으면 그걸로, 없으면 도시버스 평균 시드.
+          // refAlong 은 raw a0 유지(뒤로 안 감 보장) — along 만 앞서 출발시킨다.
+          const rs = restored.get(b.vehicleNo);
+          const seedSpeed = b.stopFlag === 1 ? 0 : rs ? rs.speed : INITIAL_SPEED;
+          const seedAlong = Math.max(a0, rs ? rs.along : a0);
+          const p0 = pointAtDistance(path, seedAlong);
           const vno = b.vehicleNo;
           const overlay = createBusOverlay(
             map,
@@ -271,9 +295,9 @@ export function useBusMarkers(map, route, opts = {}) {
           );
           buses.set(vno, {
             overlay,
-            along: a0,
+            along: seedAlong,
             vShown: 0,
-            speed: 0,
+            speed: seedSpeed,
             refAlong: a0,
             refTime: now,
             leadMs,
@@ -314,6 +338,17 @@ export function useBusMarkers(map, route, opts = {}) {
           st.overlay.remove();
           buses.delete(vno);
         }
+      }
+
+      // 새로고침 대비 스냅샷 (예측 위치·속도)
+      try {
+        const snap = {};
+        for (const [vno, st] of buses) {
+          snap[vno] = [Math.round(st.speed * 10) / 10, Math.round(st.along)];
+        }
+        sessionStorage.setItem(SS_KEY, JSON.stringify({ t: Date.now(), b: snap }));
+      } catch {
+        /* 무시 */
       }
     }
 
