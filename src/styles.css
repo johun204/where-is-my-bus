@@ -372,7 +372,12 @@ body {
   font-weight: 700;
 }
 
-/* 정류장 마커(버스 정면 아이콘) + 탭영역 */
+/* 정류장 마커(버스 정면 아이콘) + 이름 라벨 */
+.stop-wrap {
+  position: relative;
+  width: 16px;
+  height: 16px;
+}
 .stop-marker {
   position: relative;
   width: 16px;
@@ -386,6 +391,22 @@ body {
   position: absolute;
   inset: -7px;
 }
+.stop-name {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(calc(-50% + var(--ox, 14px)), calc(-50% + var(--oy, -14px)))
+    rotate(calc(-1 * var(--map-rot, 0deg)));
+  padding: 1px 4px;
+  font: 600 10px/1.15 system-ui, sans-serif;
+  color: #17233f;
+  background: rgba(255, 255, 255, 0.82);
+  border-radius: 4px;
+  white-space: nowrap;
+  pointer-events: none;
+  text-shadow: 0 0 2px #fff, 0 0 2px #fff;
+}
+.hide-stop-names .stop-name { display: none; }
 
 /* 정류장 도착정보 팝업 */
 .stoppop { max-height: 60vh; overflow-y: auto; }
