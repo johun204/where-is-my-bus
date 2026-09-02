@@ -20,8 +20,8 @@ const SIGNAL_TYPICAL = 18; // 신호대기 표준 시간(초)
 const SIGNAL_RESUME_V = 4; // m/s 신호 풀린 뒤 가정 속도
 const DEPART_V = 4; // m/s 정류장 출발 가정 속도
 const VSHOW_TAU = 0.6; // s 표시속도 평활
-const CORR_TAU = 1.2; // s 위치오차 보정 시간상수
-const CORR_MAX = 7; // m/s 위치오차 보정 상한(표시속도에 더해지는 최대)
+const CORR_TAU = 0.9; // s 위치오차 보정 시간상수 (짧을수록 빨리 따라잡음)
+const CORR_MAX = 10; // m/s 위치오차 보정 상한(표시속도에 더해지는 최대)
 
 const clamp = (v, lo, hi) => (v < lo ? lo : v > hi ? hi : v);
 
@@ -179,6 +179,8 @@ export function useBusMarkers(map, route, opts = {}) {
           const corr = Math.min(gap / CORR_TAU, CORR_MAX);
           st.along = Math.min(st.along + (st.vShown + corr) * dt, pD); // 앞으로만, 목표 안 넘김
         }
+        // 절대 규칙: 마지막 실측 위치(a0)보다 뒤에 있으면 안 됨 (몇 초 늦는 건 치명적)
+        if (st.along < st.refAlong) st.along = st.refAlong;
         st.along = clamp(st.along, 0, path.total);
 
         const p = pointAtDistance(path, st.along);
@@ -238,14 +240,15 @@ export function useBusMarkers(map, route, opts = {}) {
           hint = path.total * clamp(b.sectOrd / nStops, 0, 1);
         }
         const proj = projectOnPath(path, b, hint);
-        // GPS 투영과 sectOrd 진행률 위치를 블렌드해 노이즈 감소.
-        // 둘이 크게 어긋나면(왕복 공유구간 GPS 오투영 등) 방향이 확실한 sectOrd 채택.
+        // 기준위치 a0: GPS 투영(raw) 과 sectOrd 진행률 위치를 블렌드해 노이즈 감소하되,
+        // raw GPS 위치보다 뒤로는 절대 잡지 않는다(뒤처지면 치명적).
+        // 둘이 크게 어긋나면(왕복 공유구간 GPS 오투영) 방향이 확실한 sectOrd 채택.
         let a0 = proj.along;
         if (aSect != null) {
           a0 =
             Math.abs(aSect - proj.along) > 400
               ? aSect
-              : proj.along * 0.6 + aSect * 0.4;
+              : Math.max(proj.along, proj.along * 0.6 + aSect * 0.4);
         }
         const lag = fixLagMs(b.dataTm); // 이 fix 가 얼마나 지난 것인지
         const sampleT = nowWall - lag; // fix 시각(추정) — 속도계산용
@@ -284,8 +287,9 @@ export function useBusMarkers(map, route, opts = {}) {
 
         const lastS = st.samples[st.samples.length - 1];
         if (proj.dist > SNAP_M || Math.abs(a0 - lastS.along) > JUMP_M) {
-          // 경로 이탈 / 순환 한 바퀴 → 하드 스냅
-          st.along = a0;
+          // 순환노선 한 바퀴(끝→처음)면 그대로, 그 외(경로 이탈 등)는 앞으로만
+          const loopWrap = st.along > path.total * 0.75 && a0 < path.total * 0.25;
+          st.along = loopWrap ? a0 : Math.max(st.along, a0);
           st.vShown = 0;
           st.speed = 0;
           st.samples = [{ along: a0, t: sampleT }];
@@ -296,6 +300,7 @@ export function useBusMarkers(map, route, opts = {}) {
         }
 
         st.refAlong = a0;
+        if (st.along < a0) st.along = a0; // 새 실측이 마커보다 앞 → 즉시 앞으로 당김(뒤엔 절대 안 둠)
         st.refTime = now;
         st.leadMs = leadMs;
         st.sidx = sidx;
