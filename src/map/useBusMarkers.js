@@ -175,9 +175,14 @@ export function useBusMarkers(map, route, opts = {}) {
     // 카드/팝업에 쓰는 정보 한 덩어리 (마커 탭 시·추적 중 1초마다 같은 형태)
     function infoFor(vno, st) {
       const b = st.gps || {};
-      const next = stops.find((s) => s.ord === (b.sectOrd || 0) + 1);
       const p = pointAtDistance(path, st.along);
       const dest = destFor(st, optRef.current.refStop);
+
+      // 이 노선 기준 다음 정류장까지 — 내 위치와 무관하다.
+      // 정차 중이면 실측 속도가 0 이라 ETA 가 무한대가 되므로 하한 속도를 쓴다.
+      const ni = stops.findIndex((s) => s.ord === (b.sectOrd || 0) + 1);
+      const nextGap = ni >= 0 ? Math.max(0, stopAlongs[ni] - st.along) : null;
+
       return {
         routeId: route.routeId,
         routeNo: route.routeNo,
@@ -187,8 +192,12 @@ export function useBusMarkers(map, route, opts = {}) {
         congestion: b.congestion,
         stopFlag: b.stopFlag,
         dataTm: b.dataTm,
-        nextStopName: next ? next.name : null,
+        nextStopName: ni >= 0 ? stops[ni].name : null,
+        nextStopMeters: nextGap == null ? null : Math.round(nextGap),
+        nextStopSec:
+          nextGap == null ? null : Math.round(nextGap / Math.max(st.speed, ETA_MIN_V)),
         moving: st.speed >= V_STOP && b.stopFlag !== 1,
+        speedKmh: Math.round(st.speed * 3.6),
         lat: p.lat,
         lng: p.lng,
         dest,

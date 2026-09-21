@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { haversine } from './busPath';
 import { stopMarkerSvg } from './stopIcon';
 
@@ -32,12 +32,25 @@ function labelOffset(s, all) {
 /**
  * 현재 지도 화면에 보이는 영역의 모든 버스 정류장(마커 + 이름)을 표시.
  * (즐겨찾기 노선과 무관 — /api/stops = stationinfo/getStationByPos)
+ * pickedArsId: 지금 선택한 정류장 — 어느 정류장을 기준으로 보고 있는지 지도에서 보이게.
  */
-export function StopsLayer({ map, onStopClick }) {
+export function StopsLayer({ map, onStopClick, pickedArsId }) {
+  const elsRef = useRef(new Map()); // arsId -> 마커 엘리먼트 (선택 표시 토글용)
+  const pickRef = useRef(pickedArsId);
+  pickRef.current = pickedArsId;
+
+  // 새로 만들어지는 마커는 생성 시점에, 이미 있는 마커는 여기서 표시를 맞춘다
+  useEffect(() => {
+    for (const [id, el] of elsRef.current) {
+      el.classList.toggle('stop-wrap--pick', id === pickedArsId);
+    }
+  }, [pickedArsId]);
+
   useEffect(() => {
     if (!map) return undefined;
     const { kakao } = window;
     const markers = new Map(); // arsId -> CustomOverlay
+    const els = elsRef.current;
     let alive = true;
     let lastKey = '';
     let timer = 0;
@@ -45,6 +58,7 @@ export function StopsLayer({ map, onStopClick }) {
     function clearAll() {
       for (const ov of markers.values()) ov.setMap(null);
       markers.clear();
+      els.clear();
       lastKey = '';
     }
 
@@ -95,7 +109,7 @@ export function StopsLayer({ map, onStopClick }) {
         if (markers.has(s.arsId)) continue;
 
         const el = document.createElement('div');
-        el.className = 'stop-wrap';
+        el.className = s.arsId === pickRef.current ? 'stop-wrap stop-wrap--pick' : 'stop-wrap';
         el.style.cursor = 'pointer';
         el.style.pointerEvents = 'auto';
         el.addEventListener('click', (e) => {
@@ -115,6 +129,7 @@ export function StopsLayer({ map, onStopClick }) {
         nm.style.setProperty('--oy', `${oy}px`);
 
         el.append(mk, nm);
+        els.set(s.arsId, el);
         markers.set(
           s.arsId,
           new kakao.maps.CustomOverlay({
@@ -131,6 +146,7 @@ export function StopsLayer({ map, onStopClick }) {
         if (!seen.has(id)) {
           ov.setMap(null);
           markers.delete(id);
+          els.delete(id);
         }
       }
     }

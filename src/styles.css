@@ -98,6 +98,30 @@ button { font-family: inherit; }
 }
 .search__go:disabled { opacity: 0.6; }
 
+/* "이 정류장 지나는 노선만" 필터가 켜졌을 때의 상단 바 */
+.filterbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 10px 9px 14px;
+  border-radius: 12px;
+  background: rgba(22, 24, 29, 0.92);
+  color: #fff;
+  font-size: 13px;
+  box-shadow: var(--shadow);
+}
+.filterbar span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.filterbar button {
+  flex: none;
+  border: 0;
+  border-radius: 8px;
+  padding: 6px 11px;
+  background: rgba(255, 255, 255, 0.22);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+}
+
 .results {
   list-style: none;
   margin: 0;
@@ -262,6 +286,8 @@ button { font-family: inherit; }
 }
 .sheet--scroll { max-height: 58vh; overflow-y: auto; }
 .sheet--live { box-shadow: 0 0 0 2px var(--accent), var(--shadow); }
+.sheet--walk { padding-bottom: 12px; }
+.sheet--walk .walk { margin-bottom: 0; }
 .sheet--hint {
   display: flex;
   flex-direction: column;
@@ -297,6 +323,33 @@ button { font-family: inherit; }
 }
 .sheet__msg { margin: 8px 2px 0; color: var(--ink-dim); font-size: 13px; }
 .sheet__note { margin: -4px 2px 6px; color: var(--accent); font-size: 12px; }
+
+/* 내 위치 → 이 정류장 도보 안내 */
+.walk {
+  margin: -2px 0 10px;
+  font-size: 14.5px;
+  color: var(--ink);
+}
+.walk b { color: var(--accent); font-size: 16px; }
+.walk__how {
+  display: block;
+  margin-top: 1px;
+  font-size: 11.5px;
+  color: var(--ink-dim);
+}
+
+.sheet__filter {
+  width: 100%;
+  min-height: 42px;
+  margin-bottom: 4px;
+  border: 0;
+  border-radius: 11px;
+  background: #eef0f3;
+  color: #4a5568;
+  font-size: 13.5px;
+  font-weight: 700;
+}
+.sheet__filter.is-on { background: rgba(26, 115, 232, 0.12); color: var(--accent); }
 
 .badge {
   flex: none;
@@ -377,8 +430,15 @@ button { font-family: inherit; }
 .btn--ghost { background: #eef0f3; color: #4a5568; }
 .btn:active { filter: brightness(0.94); }
 
-/* 정류장 도착정보 목록 */
-.arr { list-style: none; margin: 4px 0 0; padding: 0; }
+/* 정류장 도착정보 목록 — 등록한 노선을 위 그룹으로 */
+.arr__group {
+  margin: 14px 2px 0;
+  font-size: 11.5px;
+  font-weight: 800;
+  letter-spacing: 0.3px;
+  color: #9aa0a8;
+}
+.arr { list-style: none; margin: 2px 0 0; padding: 0; }
 .arr li {
   display: flex;
   gap: 10px;
@@ -400,6 +460,11 @@ button { font-family: inherit; }
 .arr__dir { font-size: 11px; color: #9aa0a8; }
 .arr__t1 { font-size: 14px; color: var(--ink); font-weight: 700; }
 .arr__t2 { font-size: 12px; color: var(--ink-dim); }
+/* 내 도보시간 대비 이 버스를 탈 수 있을 확률 — 어디까지나 추정이라 작게 */
+.arr__p { margin-top: 1px; font-size: 11px; font-weight: 700; color: #9aa0a8; }
+.arr__p.is-ok { color: #1e8e4e; }
+.arr__p.is-mid { color: #c77700; }
+.arr__p.is-no { color: #aeb4bd; }
 .arr__add {
   flex: none;
   align-self: center;
@@ -525,6 +590,17 @@ button { font-family: inherit; }
 
 /* 정류장 마커(버스 정면 아이콘) + 이름 라벨 */
 .stop-wrap { position: relative; width: 16px; height: 16px; }
+/* 지금 기준으로 보고 있는 정류장 */
+.stop-wrap--pick .stop-marker {
+  transform: scale(1.5);
+  filter: drop-shadow(0 2px 5px rgba(0, 0, 0, 0.45));
+}
+.stop-wrap--pick .stop-name {
+  background: var(--accent);
+  color: #fff;
+  font-weight: 800;
+  text-shadow: none;
+}
 .stop-marker {
   position: relative;
   width: 16px;
@@ -554,3 +630,5 @@ button { font-family: inherit; }
   text-shadow: 0 0 2px #fff, 0 0 2px #fff;
 }
 .hide-stop-names .stop-name { display: none; }
+/* 기준으로 잡은 정류장 이름은 축척과 무관하게 항상 보인다 */
+.hide-stop-names .stop-wrap--pick .stop-name { display: block; }

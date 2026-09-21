@@ -1,8 +1,10 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ErrorBoundary } from './ErrorBoundary';
 import { useFavoriteRoutes } from './hooks/useFavoriteRoutes';
 import { RouteLayer } from './map/RouteLayer';
 import { StopsLayer } from './map/StopsLayer';
+import { haversine } from './map/busPath';
+import { catchProb, walkSeconds } from './map/catchBus';
 import { routeTypeColor } from './map/routeColor';
 import { useMyLocation } from './map/useMyLocation';
 
@@ -57,6 +59,15 @@ const minText = (sec) => {
   return `${Math.round(sec / 60)}분`;
 };
 
+// 소요시간(도보·다음 정류장 등). '곧 도착' 같은 판정 없이 있는 그대로.
+const spanText = (sec) => {
+  if (sec == null) return null;
+  if (sec < 60) return `${sec}초`;
+  return `약 ${Math.round(sec / 60)}분`;
+};
+
+const probClass = (p) => (p >= 0.7 ? ' is-ok' : p >= 0.4 ? ' is-mid' : ' is-no');
+
 export default function App() {
   const mapEl = useRef(null);
   const rotEl = useRef(null); // 회전 래퍼 (--map-rot CSS 변수 소유)
@@ -82,6 +93,8 @@ export default function App() {
   const [autoRouteId, setAutoRouteId] = useState(null); // 칩 탭 → 가장 가까운 버스 물색 중
   // "몇 정거장 전" 의 기준이 되는 정류장. 정류장을 탭할 때만 정해진다(현위치로 추측하지 않음).
   const [refStop, setRefStop] = useState(() => loadKept(REF_KEY));
+  const [onlyStop, setOnlyStop] = useState(null); // 이 정류장을 지나는 노선만 지도에 표시
+  const [routeStops, setRouteStops] = useState({}); // routeId -> arsId[] (노선이 서는 정류장)
 
   const initTrackRef = useRef(tracked); // 마운트 시점의 복원값(지도 초기 중심용)
   const lastSaveRef = useRef(0);
@@ -105,7 +118,7 @@ export default function App() {
   // 추적 모드: 바라보는 방향이 항상 지도 12시가 되도록 지도를 -heading 만큼 회전
   const onHeading = useCallback((deg) => applyRot(-deg, 'follow'), [applyRot]);
 
-  const { follow, onFab, exitFollow } = useMyLocation(
+  const { follow, pos: myPos, walkSpeed, onFab, exitFollow } = useMyLocation(
     map,
     onHeading,
     Boolean(initTrackRef.current), // 복원된 버스를 보여주는 중이면 내 위치로 뺏지 않음
@@ -198,9 +211,39 @@ export default function App() {
   const onStopClick = useCallback((s) => {
     setResults(null);
     setPopup(null);
-    setRefStop({ arsId: s.arsId, name: s.name }); // 탭한 정류장이 "몇 정거장 전" 의 기준
+    // 탭한 정류장이 "몇 정거장 전"의 기준이자 도보 안내·점선의 목적지
+    setRefStop({ arsId: s.arsId, name: s.name, lat: s.lat, lng: s.lng });
     setStopPop({ arsId: s.arsId, name: s.name, loading: true, error: false, arrivals: null });
   }, []);
+
+  const onRouteStops = useCallback((routeId, arsIds) => {
+    setRouteStops((p) => (p[routeId] ? p : { ...p, [routeId]: arsIds }));
+  }, []);
+
+  // 내 위치 → 기준 정류장. 걷는 중이면 실측 보행속도, 멈춰 있으면 평균 보폭 기준.
+  const walk = useMemo(() => {
+    if (!myPos || !refStop?.lat) return null;
+    const meters = Math.round(haversine(myPos, refStop));
+    return { meters, sec: walkSeconds(meters, walkSpeed), moving: walkSpeed != null };
+  }, [myPos, refStop, walkSpeed]);
+
+  // 선택한 정류장까지 연한 회색 점선 (실제 도보 경로가 아니라 방향·거리 감만 주는 용도)
+  useEffect(() => {
+    if (!map || !myPos || !refStop?.lat) return undefined;
+    const { kakao } = window;
+    const line = new kakao.maps.Polyline({
+      path: [
+        new kakao.maps.LatLng(myPos.lat, myPos.lng),
+        new kakao.maps.LatLng(refStop.lat, refStop.lng),
+      ],
+      strokeWeight: 3,
+      strokeColor: '#9aa0a8',
+      strokeOpacity: 0.9,
+      strokeStyle: 'shortdash',
+    });
+    line.setMap(map);
+    return () => line.setMap(null);
+  }, [map, myPos, refStop]);
 
   const startTrack = useCallback(
     (info) => {
@@ -455,6 +498,49 @@ export default function App() {
     setInstallEvt(null);
   }
 
+  // 도착정보 한 줄. 내 도보 시간을 알면 "탈 수 있을 확률"을 작게 덧붙인다.
+  const arrItem = (a) => {
+    const p = catchProb(a.arr1?.sec, walk?.sec);
+    return (
+      <li key={a.routeId || a.routeNo}>
+        <span className="arr__no" style={{ background: routeTypeColor(a.routeType) }}>
+          {a.routeNo}
+        </span>
+        <span className="arr__body">
+          {a.dir && <span className="arr__dir">{a.dir} 방면</span>}
+          <span className="arr__t1">{a.arr1 ? a.arr1.msg : '정보 없음'}</span>
+          {a.arr2 && <span className="arr__t2">다음: {a.arr2.msg}</span>}
+          {p != null && (
+            <span className={`arr__p${probClass(p)}`}>탈 확률 {Math.round(p * 100)}%</span>
+          )}
+        </span>
+        {a.routeId && (
+          <button
+            className={`arr__add${has(a.routeId) ? ' is-added' : ''}`}
+            disabled={has(a.routeId)}
+            onClick={() =>
+              toggle({ routeId: a.routeId, routeNo: a.routeNo, routeTp: a.routeType })
+            }
+          >
+            {has(a.routeId) ? '추가됨' : '추가'}
+          </button>
+        )}
+      </li>
+    );
+  };
+
+  // 필터가 켜져 있으면 그 정류장에 서는 노선만 지도에 그린다.
+  // 아직 정류장 목록을 못 받은 노선은 일단 남겨둔다(언마운트되면 영영 못 받으므로).
+  const shown = onlyStop
+    ? favorites.filter(
+        (r) =>
+          r.routeId === tracked?.routeId || // 추적 중인 노선은 필터와 무관하게 유지
+          r.routeId === autoRouteId ||
+          !routeStops[r.routeId] ||
+          routeStops[r.routeId].includes(onlyStop.arsId),
+      )
+    : favorites;
+
   // 하단 카드에 보여줄 버스: 추적 중이면 그 버스(실시간), 아니면 방금 탭한 버스.
   // 복원 직후엔 아직 실시간 정보가 없으므로(live=null) '불러오는 중'으로 표시한다.
   const isTracked = Boolean(tracked);
@@ -502,6 +588,17 @@ export default function App() {
             {searching ? '…' : '검색'}
           </button>
         </form>
+
+        {onlyStop && (
+          <div className="filterbar">
+            <span>
+              <b>{onlyStop.name}</b> 지나는 노선만 표시 중
+            </span>
+            <button type="button" onClick={() => setOnlyStop(null)}>
+              전체 보기
+            </button>
+          </div>
+        )}
 
         {results && (
           <ul className="results">
@@ -589,7 +686,36 @@ export default function App() {
               <span className="sheet__veh">{stopPop.name || '정류장'}</span>
               {stopPop.arsId && <span className="tag">{stopPop.arsId}</span>}
             </div>
-            <p className="sheet__note">이 정류장 기준으로 버스가 몇 정거장 전인지 표시해요</p>
+
+            {walk ? (
+              <p className="walk">
+                내 위치에서 <b>{walk.meters}m</b> · 걸어서 <b>{spanText(walk.sec)}</b>
+                <span className="walk__how">
+                  {walk.moving
+                    ? `걷는 중 ${walkSpeed.toFixed(1)}m/s 기준`
+                    : '평균 보폭 기준 · 실제 동선 감안'}
+                </span>
+              </p>
+            ) : (
+              <p className="sheet__note">이 정류장 기준으로 버스가 몇 정거장 전인지 표시해요</p>
+            )}
+
+            <button
+              type="button"
+              className={`sheet__filter${onlyStop?.arsId === stopPop.arsId ? ' is-on' : ''}`}
+              onClick={() =>
+                setOnlyStop((p) =>
+                  p?.arsId === stopPop.arsId
+                    ? null
+                    : { arsId: stopPop.arsId, name: stopPop.name },
+                )
+              }
+            >
+              {onlyStop?.arsId === stopPop.arsId
+                ? '전체 노선 다시 보기'
+                : '이 정류장 지나는 노선만 보기'}
+            </button>
+
             {stopPop.loading && <p className="sheet__msg">도착 정보를 불러오는 중…</p>}
             {!stopPop.loading && stopPop.error && (
               <p className="sheet__msg">도착 정보를 불러올 수 없어요.</p>
@@ -597,33 +723,20 @@ export default function App() {
             {!stopPop.loading && !stopPop.error && stopPop.arrivals?.length === 0 && (
               <p className="sheet__msg">도착 예정 버스가 없어요.</p>
             )}
-            {!stopPop.loading && !stopPop.error && stopPop.arrivals?.length > 0 && (
-              <ul className="arr">
-                {stopPop.arrivals.map((a) => (
-                  <li key={a.routeId || a.routeNo}>
-                    <span className="arr__no" style={{ background: routeTypeColor(a.routeType) }}>
-                      {a.routeNo}
-                    </span>
-                    <span className="arr__body">
-                      {a.dir && <span className="arr__dir">{a.dir} 방면</span>}
-                      <span className="arr__t1">{a.arr1 ? a.arr1.msg : '정보 없음'}</span>
-                      {a.arr2 && <span className="arr__t2">다음: {a.arr2.msg}</span>}
-                    </span>
-                    {a.routeId && (
-                      <button
-                        className={`arr__add${has(a.routeId) ? ' is-added' : ''}`}
-                        disabled={has(a.routeId)}
-                        onClick={() =>
-                          toggle({ routeId: a.routeId, routeNo: a.routeNo, routeTp: a.routeType })
-                        }
-                      >
-                        {has(a.routeId) ? '추가됨' : '추가'}
-                      </button>
-                    )}
-                  </li>
-                ))}
-              </ul>
-            )}
+            {!stopPop.loading &&
+              !stopPop.error &&
+              stopPop.arrivals?.length > 0 &&
+              [
+                ['내 노선', stopPop.arrivals.filter((a) => a.routeId && has(a.routeId))],
+                ['그 외 노선', stopPop.arrivals.filter((a) => !(a.routeId && has(a.routeId)))],
+              ].map(([label, list]) =>
+                list.length === 0 ? null : (
+                  <div key={label}>
+                    <h3 className="arr__group">{label}</h3>
+                    <ul className="arr">{list.map(arrItem)}</ul>
+                  </div>
+                ),
+              )}
           </div>
         ) : card ? (
           <div className={`sheet${isTracked ? ' sheet--live' : ''}`}>
@@ -672,9 +785,19 @@ export default function App() {
             {!pending && (
               <div className="meta">
                 <span className={card.stopFlag === 1 ? 'meta--stop' : ''}>
-                  {card.stopFlag === 1 ? '정류장 정차 중' : card.moving ? '운행 중' : '신호 대기'}
+                  {card.stopFlag === 1
+                    ? '정류장 정차 중'
+                    : card.moving
+                      ? `운행 중 ${card.speedKmh}km/h`
+                      : '신호 대기'}
                 </span>
-                {card.nextStopName && <span>다음 {card.nextStopName}</span>}
+                {card.nextStopName && (
+                  <span>
+                    다음 {card.nextStopName}
+                    {card.nextStopMeters != null && ` ${card.nextStopMeters}m`}
+                    {card.nextStopSec != null && ` · ${spanText(card.nextStopSec)}`}
+                  </span>
+                )}
                 {CONGESTION[card.congestion] && <span>{CONGESTION[card.congestion]}</span>}
                 {agoText(card.dataTm) && (
                   <span className="meta__ago">{agoText(card.dataTm)} 정보</span>
@@ -701,6 +824,24 @@ export default function App() {
               )}
             </div>
           </div>
+        ) : walk ? (
+          <div className="sheet sheet--walk">
+            <button className="sheet__x" onClick={() => setRefStop(null)} aria-label="기준 해제">
+              ×
+            </button>
+            <div className="sheet__head">
+              <span className="sheet__veh">{refStop.name}</span>
+              <span className="tag">기준 정류장</span>
+            </div>
+            <p className="walk">
+              내 위치에서 <b>{walk.meters}m</b> · 걸어서 <b>{spanText(walk.sec)}</b>
+              <span className="walk__how">
+                {walk.moving
+                  ? `걷는 중 ${walkSpeed.toFixed(1)}m/s 기준`
+                  : '평균 보폭 기준 · 실제 동선 감안'}
+              </span>
+            </p>
+          </div>
         ) : favorites.length === 0 ? (
           <div className="sheet sheet--hint">
             <b>버스 번호를 검색해 추가해 보세요.</b>
@@ -711,14 +852,21 @@ export default function App() {
         ) : null}
       </div>
 
-      {map && <StopsLayer map={map} onStopClick={onStopClick} />}
+      {map && (
+        <StopsLayer
+          map={map}
+          onStopClick={onStopClick}
+          pickedArsId={onlyStop?.arsId || refStop?.arsId || null}
+        />
+      )}
 
       {map &&
-        favorites.map((r) => (
+        shown.map((r) => (
           <ErrorBoundary key={r.routeId} fallback={null}>
             <RouteLayer
               map={map}
               route={r}
+              onStops={onRouteStops}
               bus={{
                 onBusClick,
                 onAutoTrack: startTrack,

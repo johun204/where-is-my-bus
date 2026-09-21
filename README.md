@@ -17,11 +17,12 @@ api/                    Vercel Python Serverless (서울시 버스 API 프록시
 src/
   App.jsx                      화면 전체: 상단 검색·노선칩, 하단 정보카드(핵심 정보는 엄지 영역), 두 손가락 지도 회전, 추적 상태 영속화
   map/predict.js               ★ 위치 보정 모델(순수함수) — 정차/신호/주행 3케이스 + 전방편향. predict.test.mjs 로 검증
+  map/catchBus.js              도보 소요시간(우회 보정) + 다음 버스 승차확률. catchBus.test.mjs 로 검증
   map/busPath.js               경로 투영(단조 정류장 투영 projectStopsAlong 포함) + 보간(leadAlong)
   map/useBusMarkers.js         폴링·속도추정·보정 적용·마커 애니메이션·추적/자동선택/도착정보 산출
   map/useMyLocation.js         watchPosition 연속 추적 + 추적 모드(지도 팔로우 + 나침반 방위로 지도 12시 정렬), 현위치 좌표 제공
   map/busOverlay.js            버스 마커(노선색 SVG + 노선번호), setScale 축척 연동, setActive 추적 강조
-  map/StopsLayer.jsx           화면에 보이는 정류장 마커 + 이름 라벨 (탭하면 도착정보)
+  map/StopsLayer.jsx           화면에 보이는 정류장 마커 + 이름 라벨 (탭하면 도착정보), 선택 정류장 강조
   map/RouteLayer.jsx           노선 1개 = 경로선 + 버스
   map/drawRoute.js             Polyline
   map/routeColor.js            노선유형 → 색상 (간선 파랑 / 지선 초록 / 광역 빨강 / 순환 노랑)
@@ -64,6 +65,17 @@ API 는 `dataTm` 기준 몇 초 전 데이터이고 폴링 간격도 있어서, 
   GPS 최근접은 길 건너 반대방향 정류장을 집어서 엉뚱한 거리를 냈다. 기준을 정하기 전에는
   카드가 안내 문구만 보여준다.
 - 지도를 직접 움직이면 따라가기만 멈추고(추적은 유지) `버스로 이동` 으로 되돌아간다.
+- **버스 탭** → 이 노선 기준 다음 정류장까지 남은 거리·예상시간(실측 평균속도), 현재 속력,
+  정차/신호대기/운행 중 상태.
+- **정류장 탭** → 도착예정 순 목록을 `내 노선`(등록해 둔 것) / `그 외 노선` 두 그룹으로.
+  `이 정류장 지나는 노선만 보기` 로 지도를 그 정류장 경유 노선만 남길 수 있다
+  (판정은 각 노선의 `stops` arsId 목록 — 운행 여부와 무관. 추적 중인 노선은 필터에서 제외되지 않음).
+- **도보 안내**: 내 위치 → 선택한 정류장 거리와 소요시간. 걷는 중이면 실측 보행속도
+  (`coords.speed` 우선, 없으면 최근 20초 이동거리), 멈춰 있으면 평균 보폭(1.25m/s).
+  직선으로 걸어갈 수 있는 길은 없으므로 `WALK_DETOUR`(1.35) 로 우회 보정한다.
+  지도에는 현위치→정류장 연한 회색 점선(방향·거리 감만 주는 용도, 실제 도보 경로 아님).
+- **승차확률**: 버스 도착예정 `traTime` 과 내 도보시간의 여유를 로지스틱으로.
+  여유 0이면 50%, ±45초에 약 73%/27%. 양쪽 다 오차가 크므로 단정하지 않고 작게 표시한다.
 - 추적 상태는 localStorage(`busmap.track.v1`, 6시간) 에 차량번호·마지막 좌표까지 저장 →
   **앱을 껐다 켜면 그 버스 위치에서 바로 시작**한다. 그 차량이 운행을 마쳤으면 안내 후 해제.
 
@@ -96,7 +108,14 @@ npm run dev               # 터미널 2: 프론트 (:5173). /api 는 :8000 으�
 - 카카오 개발자 콘솔 Web 플랫폼 사이트 도메인에 `http://localhost:5173` 등록 필요.
 - `vercel dev` 는 Vercel 로그인이 필요하므로 로컬은 위 2-프로세스 방식을 사용.
 
-자체 검증(프레임워크 없음): `node src/map/busPath.test.mjs` · `node src/map/predict.test.mjs` · `python api/_util_test.py`
+자체 검증(프레임워크 없음):
+
+```bash
+node src/map/busPath.test.mjs
+node src/map/predict.test.mjs
+node src/map/catchBus.test.mjs
+python api/_util_test.py
+```
 
 ## Vercel 배포
 
