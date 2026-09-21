@@ -1,29 +1,38 @@
 import { useEffect, useRef } from 'react';
 import { createBusOverlay } from './busOverlay';
-import { buildPath, leadAlong, pointAtDistance, projectOnPath, sidxFor } from './busPath';
+import {
+  buildPath,
+  haversine,
+  pointAtDistance,
+  projectOnPath,
+  sidxFor,
+} from './busPath';
+import { V_STOP, predict } from './predict';
 import { routeTypeColor } from './routeColor';
 
 const FAST_MS = 3000; // 접속 직후: 이 간격으로
 const FAST_COUNT = 3; // 이만큼 fetch 해서 최근속도를 빨리 확보
 const SLOW_MS = 6000; // 이후 통상 폴링 주기
-const MAX_EXTRAP_S = 30; // 실측 이후 최대 이 시간까지만 예측 전진
+const TRACK_MS = 3000; // 추적 중인 노선은 계속 빠르게 (오차가 가장 중요한 순간)
 const LEAD_FALLBACK_MS = 7000; // dataTm 없거나 기기 시계 어긋날 때 기본 지연 추정치
 const WINDOW = 3; // 최근속도 계산에 쓰는 fix 개수
 const SNAP_M = 120; // 도로형상에서 이만큼 벗어난 좌표는 스냅
 const JUMP_M = 3000; // 경로상 이만큼 튀면(순환노선 한 바퀴 등) 스냅
 const MAX_SPEED = 18; // m/s (~65km/h)
+const ARRIVE_SNAP_M = 150; // stopFlag=1 일 때 해당 정류장으로 당기는 최대 거리
 
-const V_STOP = 0.8; // 최근속도 이 미만이면 '정차'
-const CONFIRM_HOLD_S = 9; // 마지막 폴이 이 안이면 '정차' 관측을 신뢰해 그 자리 고정
-const DWELL_TYPICAL = 10; // 정류장 승하차 표준 시간(초)
-const SIGNAL_TYPICAL = 18; // 신호대기 표준 시간(초)
-const SIGNAL_RESUME_V = 4; // m/s 신호 풀린 뒤 가정 속도
-const DEPART_V = 4; // m/s 정류장 출발 가정 속도
 const VSHOW_TAU = 0.6; // s 표시속도 평활
 const CORR_TAU = 0.9; // s 위치오차 보정 시간상수 (짧을수록 빨리 따라잡음)
 const CORR_MAX = 10; // m/s 위치오차 보정 상한(표시속도에 더해지는 최대)
 const INITIAL_SPEED = 5; // m/s 새 버스의 초기 속도 추정(첫 fix 라 실측 속도 없음)
 const RESTORE_MAX_MS = 25000; // 새로고침 복원: 저장상태가 이보다 오래되면 무시
+
+const STAT_MS = 1000; // 추적 중 카드 정보 갱신 주기
+const MY_STOP_MAX_M = 900; // 내 위치에서 이보다 먼 정류장은 '내 정류장'으로 안 봄
+const ETA_MIN_V = 3.5; // m/s ETA 계산에 쓰는 하한 속도(정차 중엔 실측이 0 이라 무한대가 됨)
+const ETA_DWELL_S = 12; // s ETA 에서 정류장 하나당 더하는 시간
+const MISS_LIMIT = 3; // 추적 차량이 연속 이만큼 안 보이면 운행종료로 판단
+const SAME_FIX_MS = 1000; // 실측 시각이 이 안이면 같은 fix 의 재전송으로 본다
 
 const clamp = (v, lo, hi) => (v < lo ? lo : v > hi ? hi : v);
 
@@ -66,52 +75,23 @@ function sectAlong(b, stopByOrd) {
 }
 
 /**
- * 실제 버스 위치 '지금'을 케이스별로 추정.
- *  st.refAlong = 마지막 fix 위치(a0, sectOrd+진행률 기반), st.refTime = 응답 수신시각(perf)
- *  st.leadMs = 그 fix 의 지연(ms), st.speed = 최근 fix 가중속도, st.stopFlag = 도착여부
- * → { pDes: 지금 위치 추정, vEst: 지금 속도 추정 }
+ * 노선 하나의 실시간 버스 마커를 그리고 위치를 보정한다.
+ *
+ * opts:
+ *   onBusClick(info)      마커 탭
+ *   onAutoTrack(info)     autoTrack 요청에 대한 응답(추적할 차량을 골라서 알려줌)
+ *   onTrackStat(info)     추적 중 1초마다 최신 정보
+ *   onTrackLost()         추적 차량이 응답에서 사라짐(운행 종료)
+ *   trackedVehicleNo      추적 중인 차량번호
+ *   selectedVehicleNo     팝업이 열려 있는 차량번호
+ *   trackCentering        false 면 추적 중이어도 지도를 따라 옮기지 않음
+ *   myPos                 { lat, lng } 내 위치 (없으면 null)
+ *   autoTrack             true 면 이 노선에서 추적할 버스를 골라 onAutoTrack 호출
  */
-function predict(st, now, sortedStops) {
-  const sinceConfirm = (now - st.refTime) / 1000; // 마지막 폴 이후
-  const latency = (st.leadMs ?? LEAD_FALLBACK_MS) / 1000; // fix ~ 응답수신
-  const dtEl = Math.min(sinceConfirm + latency, MAX_EXTRAP_S); // fix 시각 이후 총 경과
-  const a0 = st.refAlong;
-  const vh = st.speed;
-  const upper = a0 + Math.max(vh, 3) * dtEl * 1.7 + 25; // 그럴듯한 상한
-
-  // 1) 정류장 도착·정차 (stopFlag=1)
-  if (st.stopFlag === 1) {
-    if (sinceConfirm < CONFIRM_HOLD_S) return { pDes: a0, vEst: 0 };
-    const moveT = dtEl - DWELL_TYPICAL; // 확인 끊긴 지 오래 → 승하차 마치고 출발했을 것
-    if (moveT <= 0) return { pDes: a0, vEst: 0 };
-    const v = vh > 1.5 ? vh : DEPART_V;
-    return { pDes: Math.min(a0 + v * moveT, upper), vEst: v };
-  }
-
-  // 2) 정차인데 도착 아님 = 신호/정체 (교차로·신호등 옆 정류장 포함)
-  if (vh < V_STOP) {
-    if (sinceConfirm < CONFIRM_HOLD_S) return { pDes: a0, vEst: 0 };
-    const goT = dtEl - SIGNAL_TYPICAL; // 확인 끊긴 지 오래 → 신호 풀렸을 것(불확실)
-    if (goT <= 0) return { pDes: a0, vEst: 0 };
-    const v = Math.max(vh, SIGNAL_RESUME_V);
-    return { pDes: Math.min(a0 + v * goT * 0.8, upper), vEst: v * 0.6 };
-  }
-
-  // 3) 주행 중 → 도로형상 추측항법 (앞 정류장 정차시간 반영)
-  return {
-    pDes: Math.min(leadAlong(a0, vh, dtEl, sortedStops, st.sidx || 0), upper),
-    vEst: vh,
-  };
-}
-
 export function useBusMarkers(map, route, opts = {}) {
   const busesRef = useRef(new Map());
-  const clickRef = useRef(null);
-  const trackRef = useRef(null);
-  const selRef = useRef(null);
-  clickRef.current = opts.onBusClick || null;
-  trackRef.current = opts.trackedVehicleNo || null;
-  selRef.current = opts.selectedVehicleNo || null;
+  const optRef = useRef(opts);
+  optRef.current = opts; // 콜백/프롭은 항상 최신 것을 effect 안에서 참조
 
   useEffect(() => {
     if (!map || !route?.path?.length) return undefined;
@@ -120,16 +100,14 @@ export function useBusMarkers(map, route, opts = {}) {
     const path = buildPath(route.path);
     const color = routeTypeColor(route.routeTp);
     const buses = busesRef.current;
+    const stops = route.stops || [];
 
     // 정류장 경로상 위치: 순번 순(sectAlong 용) + 오름차순(leadAlong·sidx 용)
-    const nStops = route.stops?.length || 0;
-    const stopByOrd = (route.stops || []).map(
+    const nStops = stops.length;
+    const stopByOrd = stops.map(
       (s, idx) =>
-        projectOnPath(
-          path,
-          s,
-          nStops > 1 ? (path.total * (idx + 0.5)) / nStops : null,
-        ).along,
+        projectOnPath(path, s, nStops > 1 ? (path.total * (idx + 0.5)) / nStops : null)
+          .along,
     );
     const stopSorted = [...stopByOrd].sort((a, b) => a - b);
 
@@ -150,29 +128,73 @@ export function useBusMarkers(map, route, opts = {}) {
       /* 무시 */
     }
 
-    function emitClick(b) {
-      if (!b || !clickRef.current) return;
-      const next = (route.stops || []).find((s) => s.ord === (b.sectOrd || 0) + 1);
-      clickRef.current({
-        routeId: route.routeId,
-        routeNo: route.routeNo,
-        routeTp: route.routeTp,
-        vehicleNo: b.vehicleNo,
-        lowFloor: b.lowFloor,
-        congestion: b.congestion,
-        sectOrd: b.sectOrd,
-        stopFlag: b.stopFlag,
-        nextStTm: b.nextStTm,
-        dataTm: b.dataTm,
-        nextStopName: next ? next.name : null,
-      });
-    }
-
     let alive = true;
     let raf = 0;
     let lastFrame = performance.now();
     let scale = zoomScale(map.getLevel());
     let lastTrackCenter = 0;
+    let lastStat = 0;
+    let missCount = 0;
+    let autoServed = false;
+    let myPosSeen; // opts.myPos 의 직전 참조값
+    let myStop = null; // 내 위치에서 가장 가까운 이 노선의 정류장
+
+    // 사용자는 결국 정류장에서 타므로, 내 GPS 를 경로에 투영하는 것보다
+    // "내게 가장 가까운 이 노선 정류장"이 기준으로 훨씬 쓸모 있다.
+    function findMyStop(pos) {
+      if (!pos || !nStops) return null;
+      let best = null;
+      for (let i = 0; i < nStops; i++) {
+        const d = haversine(stops[i], pos);
+        if (!best || d < best.d) best = { d, i };
+      }
+      if (!best || best.d > MY_STOP_MAX_M) return null;
+      return { name: stops[best.i].name, along: stopByOrd[best.i] };
+    }
+
+    // 카드/팝업에 쓰는 정보 한 덩어리 (마커 탭 시·추적 중 1초마다 같은 형태)
+    function infoFor(vno, st) {
+      const b = st.gps || {};
+      const next = stops.find((s) => s.ord === (b.sectOrd || 0) + 1);
+      const p = pointAtDistance(path, st.along);
+      let dest = null;
+      if (myStop) {
+        const gap = myStop.along - st.along;
+        if (gap < -30) {
+          dest = { name: myStop.name, passed: true };
+        } else {
+          const away = Math.max(
+            1,
+            sidxFor(stopSorted, myStop.along) - sidxFor(stopSorted, st.along) + 1,
+          );
+          const here = gap < 30; // 사실상 내 정류장에 와 있음
+          dest = {
+            name: myStop.name,
+            stopsAway: here ? 0 : away,
+            meters: Math.max(0, Math.round(gap)),
+            etaSec: Math.round(
+              Math.max(0, gap) / Math.max(st.speed, ETA_MIN_V) +
+                (here ? 0 : away - 1) * ETA_DWELL_S,
+            ),
+          };
+        }
+      }
+      return {
+        routeId: route.routeId,
+        routeNo: route.routeNo,
+        routeTp: route.routeTp,
+        vehicleNo: vno,
+        lowFloor: b.lowFloor,
+        congestion: b.congestion,
+        stopFlag: b.stopFlag,
+        dataTm: b.dataTm,
+        nextStopName: next ? next.name : null,
+        moving: st.speed >= V_STOP && b.stopFlag !== 1,
+        lat: p.lat,
+        lng: p.lng,
+        dest,
+      };
+    }
 
     const onZoom = () => {
       scale = zoomScale(map.getLevel());
@@ -184,10 +206,18 @@ export function useBusMarkers(map, route, opts = {}) {
       if (!alive) return;
       const dt = Math.min(0.1, (now - lastFrame) / 1000);
       lastFrame = now;
+      const nowWall = Date.now();
       const kShow = 1 - Math.exp(-dt / VSHOW_TAU);
+      const o = optRef.current;
+      const trackVno = o.trackedVehicleNo || null;
+
+      if (o.myPos !== myPosSeen) {
+        myPosSeen = o.myPos;
+        myStop = findMyStop(o.myPos);
+      }
 
       for (const [vno, st] of buses) {
-        const { pDes, vEst } = predict(st, now, stopSorted);
+        const { pDes, vEst } = predict(st, nowWall, stopSorted);
         const pD = clamp(pDes, 0, path.total);
 
         st.vShown += (vEst - st.vShown) * kShow;
@@ -206,11 +236,48 @@ export function useBusMarkers(map, route, opts = {}) {
         const ll = new kakao.maps.LatLng(p.lat, p.lng);
         st.overlay.setPosition(ll);
         st.overlay.setHeading(p.heading);
-        if (vno === trackRef.current && now - lastTrackCenter > 80) {
+
+        const active = vno === trackVno || vno === o.selectedVehicleNo;
+        if (active !== st.active) {
+          st.active = active;
+          st.overlay.setActive(active);
+        }
+        if (vno === trackVno && o.trackCentering !== false && now - lastTrackCenter > 80) {
           map.setCenter(ll);
           lastTrackCenter = now;
         }
       }
+
+      // 노선 칩 탭 → 내 정류장으로 오고 있는(아직 안 지난) 가장 가까운 버스를 고른다
+      if (!o.autoTrack) {
+        autoServed = false;
+      } else if (!autoServed && buses.size) {
+        autoServed = true;
+        let best = null;
+        if (myStop) {
+          for (const [vno, st] of buses) {
+            if (st.along <= myStop.along - 10 && (!best || st.along > best.along)) {
+              best = { vno, along: st.along };
+            }
+          }
+        }
+        if (!best) {
+          const c = map.getCenter();
+          const cp = { lat: c.getLat(), lng: c.getLng() };
+          for (const [vno, st] of buses) {
+            const d = haversine(pointAtDistance(path, st.along), cp);
+            if (!best || d < best.d) best = { vno, d };
+          }
+        }
+        if (best) o.onAutoTrack?.(infoFor(best.vno, buses.get(best.vno)));
+      }
+
+      if (trackVno && now - lastStat > STAT_MS) {
+        lastStat = now;
+        const st = buses.get(trackVno);
+        if (st) o.onTrackStat?.(infoFor(trackVno, st));
+      }
+
       raf = requestAnimationFrame(frame);
     }
     raf = requestAnimationFrame(frame);
@@ -245,7 +312,6 @@ export function useBusMarkers(map, route, opts = {}) {
       if (!alive) return;
       if (!Array.isArray(data.buses)) return;
 
-      const now = performance.now();
       const nowWall = Date.now();
       const seen = new Set();
 
@@ -269,10 +335,15 @@ export function useBusMarkers(map, route, opts = {}) {
               ? aSect
               : Math.max(proj.along, proj.along * 0.6 + aSect * 0.4);
         }
-        const lag = fixLagMs(b.dataTm); // 이 fix 가 얼마나 지난 것인지
-        const sampleT = nowWall - lag; // fix 시각(추정) — 속도계산용
+        // 정류장 도착 상태면 그 정류장 위치로 스냅. 사용자가 정확도를 가장 원하는 순간이라
+        // GPS 노이즈 대신 "정류장에 서 있다"는 API 의 사실을 그대로 쓴다.
+        if (b.stopFlag === 1) {
+          const at = stopByOrd[b.sectOrd];
+          if (Number.isFinite(at) && Math.abs(at - a0) < ARRIVE_SNAP_M) a0 = at;
+        }
+
+        const fixWall = nowWall - fixLagMs(b.dataTm); // 이 실측의 시각(추정)
         const sidx = sidxFor(stopSorted, a0);
-        const leadMs = b.stopFlag === 1 ? 0 : lag; // 예측 전진에 쓰는 지연(도착중이면 0)
 
         if (!st) {
           // 실측 속도가 아직 없으므로: 복원값 있으면 그걸로, 없으면 도시버스 평균 시드.
@@ -290,7 +361,7 @@ export function useBusMarkers(map, route, opts = {}) {
             scale,
             () => {
               const cur = buses.get(vno);
-              if (cur) emitClick(cur.gps);
+              if (cur) optRef.current.onBusClick?.(infoFor(vno, cur));
             },
           );
           buses.set(vno, {
@@ -299,44 +370,72 @@ export function useBusMarkers(map, route, opts = {}) {
             vShown: 0,
             speed: seedSpeed,
             refAlong: a0,
-            refTime: now,
-            leadMs,
+            fixWall,
+            haltWall: b.stopFlag === 1 ? fixWall : null,
             sidx,
             stopFlag: b.stopFlag,
+            active: false,
             gps: b,
-            samples: [{ along: a0, t: sampleT }],
+            samples: [{ along: a0, t: fixWall }],
           });
           continue;
         }
 
         const lastS = st.samples[st.samples.length - 1];
+        // 폴링 주기가 API 갱신 주기보다 짧아서 같은 fix 가 다시 오는 경우가 잦다.
+        // 그걸 샘플로 넣으면 Δt=0 인 구간 때문에 속도가 0으로 무너져 '정차'로 오판한다.
+        const sameFix = Math.abs(fixWall - lastS.t) < SAME_FIX_MS;
+        if (sameFix) {
+          st.gps = b;
+          st.fixWall = fixWall;
+          continue;
+        }
         if (proj.dist > SNAP_M || Math.abs(a0 - lastS.along) > JUMP_M) {
           // 순환노선 한 바퀴(끝→처음)면 그대로, 그 외(경로 이탈 등)는 앞으로만
           const loopWrap = st.along > path.total * 0.75 && a0 < path.total * 0.25;
           st.along = loopWrap ? a0 : Math.max(st.along, a0);
           st.vShown = 0;
-          st.speed = 0;
-          st.samples = [{ along: a0, t: sampleT }];
+          st.speed = INITIAL_SPEED; // 실측 연속성 끊김 — 멈춘 걸로 오인하지 않게 평균속도로
+          st.samples = [{ along: a0, t: fixWall }];
         } else {
-          st.samples.push({ along: a0, t: sampleT });
+          st.samples.push({ along: a0, t: fixWall });
           if (st.samples.length > WINDOW) st.samples.shift();
           recalcSpeed(st);
         }
 
+        // 멈춤 구간의 시작 시각 — "이미 얼마나 서 있었나"가 출발 시점 예측의 핵심 단서
+        const halted = b.stopFlag === 1 || st.speed < V_STOP;
+        st.haltWall = halted ? (st.haltWall ?? fixWall) : null;
+
         st.refAlong = a0;
-        if (st.along < a0) st.along = a0; // 새 실측이 마커보다 앞 → 즉시 앞으로 당김(뒤엔 절대 안 둠)
-        st.refTime = now;
-        st.leadMs = leadMs;
+        if (st.along < a0) st.along = a0; // 새 실측이 마커보다 앞 → 즉시 당김(뒤엔 절대 안 둠)
+        st.fixWall = fixWall;
         st.sidx = sidx;
         st.stopFlag = b.stopFlag;
         st.gps = b;
-        if (b.vehicleNo === selRef.current) emitClick(b);
+        if (b.vehicleNo === optRef.current.selectedVehicleNo) {
+          optRef.current.onBusClick?.(infoFor(b.vehicleNo, st));
+        }
       }
 
       for (const [vno, st] of buses) {
         if (!seen.has(vno)) {
           st.overlay.remove();
           buses.delete(vno);
+        }
+      }
+
+      // 추적하던 차량이 연속으로 안 보이면 운행 종료/차고지행 → 위로 알림
+      const tv = optRef.current.trackedVehicleNo;
+      if (tv) {
+        if (seen.has(tv)) {
+          missCount = 0;
+        } else {
+          missCount += 1;
+          if (missCount >= MISS_LIMIT) {
+            missCount = 0;
+            optRef.current.onTrackLost?.();
+          }
         }
       }
 
@@ -358,7 +457,12 @@ export function useBusMarkers(map, route, opts = {}) {
       await poll();
       if (!alive) return;
       pollCount += 1;
-      timer = setTimeout(loop, pollCount < FAST_COUNT ? FAST_MS : SLOW_MS);
+      const wait = optRef.current.trackedVehicleNo
+        ? TRACK_MS
+        : pollCount < FAST_COUNT
+          ? FAST_MS
+          : SLOW_MS;
+      timer = setTimeout(loop, wait);
     }
     loop();
 

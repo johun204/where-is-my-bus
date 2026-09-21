@@ -8,22 +8,31 @@ import { useMyLocation } from './map/useMyLocation';
 
 const FALLBACK = { lat: 37.5665, lng: 126.978 }; // 서울시청 (위치 권한 거부 시)
 
-const seen = (k) => {
+// 추적 중이던 버스를 앱을 껐다 켜도 이어서 본다. 마지막 좌표도 같이 저장해 두면
+// API 응답이 오기 전에도 지도를 그 자리에 먼저 띄울 수 있다.
+const TRACK_KEY = 'busmap.track.v1';
+const TRACK_TTL_MS = 6 * 60 * 60 * 1000; // 이보다 오래된 추적은 무의미(그 버스는 이미 차고지)
+const SAVE_MIN_MS = 5000; // 좌표 저장 최소 간격
+
+function loadTrack() {
   try {
-    return !!localStorage.getItem(`busmap.onboard.${k}`);
+    const v = JSON.parse(localStorage.getItem(TRACK_KEY));
+    return v && v.routeId && v.vehicleNo && Date.now() - v.t < TRACK_TTL_MS ? v : null;
   } catch {
-    return true;
+    return null;
   }
-};
-const markSeen = (k) => {
+}
+function saveTrack(t) {
   try {
-    localStorage.setItem(`busmap.onboard.${k}`, '1');
+    if (t) localStorage.setItem(TRACK_KEY, JSON.stringify({ ...t, t: Date.now() }));
+    else localStorage.removeItem(TRACK_KEY);
   } catch {
-    /* ignore */
+    /* 사파리 사생활 모드 등 — 저장 못 해도 동작에는 지장 없음 */
   }
-};
+}
 
 const CONGESTION = { 3: '여유', 4: '보통', 5: '혼잡', 6: '매우 혼잡' };
+
 const agoText = (dataTm) => {
   if (!/^\d{14}$/.test(dataTm || '')) return null;
   const s = dataTm;
@@ -35,9 +44,12 @@ const agoText = (dataTm) => {
   if (sec < 0 || sec > 3600) return null;
   return sec < 60 ? `${sec}초 전` : `${Math.floor(sec / 60)}분 전`;
 };
-const etaText = (t) => {
-  if (t == null || t < 0 || t > 1800) return null; // 이 endpoint 의 nextStTm 은 종종 비정상
-  return t < 60 ? `${t}초` : `약 ${Math.round(t / 60)}분`;
+
+const minText = (sec) => {
+  if (sec == null) return null;
+  if (sec < 45) return '곧 도착';
+  if (sec < 90) return '1분';
+  return `${Math.round(sec / 60)}분`;
 };
 
 export default function App() {
@@ -54,24 +66,78 @@ export default function App() {
   const [results, setResults] = useState(null);
   const [searching, setSearching] = useState(false);
   const [installEvt, setInstallEvt] = useState(null);
-  const [coach, setCoach] = useState(() => (seen('search') ? null : 'search'));
-  const [popup, setPopup] = useState(null); // 버스 마커 클릭 시 정보
-  const [stopPop, setStopPop] = useState(null); // 정류장 마커 클릭 시 정보
-  const [tracked, setTracked] = useState(null); // { routeId, vehicleNo, routeNo } | null
-  const prevFavCount = useRef(0);
-  const { favorites, has, toggle, toggleEnabled } = useFavoriteRoutes();
+  const [rotated, setRotated] = useState(false);
+  const [toast, setToast] = useState(null);
+  const [popup, setPopup] = useState(null); // 버스 마커 탭
+  const [stopPop, setStopPop] = useState(null); // 정류장 마커 탭
 
-  const onBusClick = useCallback((info) => {
-    setResults(null);
-    setStopPop(null);
-    setPopup(info);
+  const [tracked, setTracked] = useState(loadTrack); // { routeId, routeNo, routeTp, vehicleNo }
+  const [trackStat, setTrackStat] = useState(null); // 추적 중 1초마다 오는 최신 정보
+  const [centering, setCentering] = useState(true); // 지도를 버스에 붙여 따라갈지
+  const [autoRouteId, setAutoRouteId] = useState(null); // 칩 탭 → 가장 가까운 버스 물색 중
+
+  const initTrackRef = useRef(tracked); // 마운트 시점의 복원값(지도 초기 중심용)
+  const lastSaveRef = useRef(0);
+  const { favorites, has, toggle } = useFavoriteRoutes();
+
+  const flash = useCallback((msg) => setToast(msg), []);
+  useEffect(() => {
+    if (!toast) return undefined;
+    const t = setTimeout(() => setToast(null), 4000);
+    return () => clearTimeout(t);
+  }, [toast]);
+
+  const applyRot = useCallback((deg, src) => {
+    rotSrcRef.current = src;
+    mapRotRef.current = deg;
+    rotEl.current?.style.setProperty('--map-rot', `${deg}deg`);
+    const m = ((deg % 360) + 360) % 360;
+    setRotated(m > 0.5 && m < 359.5);
   }, []);
 
-  const onStopClick = useCallback((s) => {
-    setResults(null);
-    setPopup(null);
-    setStopPop({ arsId: s.arsId, name: s.name, loading: true, error: false, arrivals: null });
+  // 추적 모드: 바라보는 방향이 항상 지도 12시가 되도록 지도를 -heading 만큼 회전
+  const onHeading = useCallback((deg) => applyRot(-deg, 'follow'), [applyRot]);
+
+  const { follow, pos: myPos, onFab, exitFollow } = useMyLocation(
+    map,
+    onHeading,
+    Boolean(initTrackRef.current), // 복원된 버스를 보여주는 중이면 내 위치로 뺏지 않음
+  );
+
+  // 지도 생성 — 복원된 추적이 있으면 그 버스의 마지막 좌표에서 시작(응답 대기 중에도 바로 보임)
+  useEffect(() => {
+    window.kakao.maps.load(() => {
+      const init = initTrackRef.current;
+      const c = init && init.lat && init.lng ? init : FALLBACK;
+      const m = new window.kakao.maps.Map(mapEl.current, {
+        center: new window.kakao.maps.LatLng(c.lat, c.lng),
+        level: 4,
+      });
+      window.kakao.maps.event.addListener(m, 'click', () => {
+        setResults(null);
+        setPopup(null);
+        setStopPop(null);
+      });
+      setMap(m);
+    });
   }, []);
+
+  // 복원한 추적의 노선이 즐겨찾기에서 빠졌으면(=지도에 안 그려짐) 추적도 정리
+  useEffect(() => {
+    const t = initTrackRef.current;
+    if (t && !favorites.some((f) => f.routeId === t.routeId)) setTracked(null);
+    // 마운트 시 한 번만
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    saveTrack(tracked);
+    setCentering(true); // 새로 추적을 시작하면 다시 지도를 버스에 붙인다
+  }, [tracked]);
+
+  useEffect(() => {
+    followRef.current = follow;
+  }, [follow]);
 
   // 정류장 도착정보: 열려 있는 동안 20초마다 갱신
   useEffect(() => {
@@ -102,81 +168,96 @@ export default function App() {
     };
   }, [stopPop?.arsId]);
 
-  // 처음 노선을 추가하면 칩(껐다 켜기) 안내
+  // 칩 탭 후 일정 시간 안에 버스를 못 고르면(운행 종료 등) 안내하고 포기
   useEffect(() => {
-    const was = prevFavCount.current;
-    prevFavCount.current = favorites.length;
-    if (was === 0 && favorites.length > 0 && !seen('chip')) {
-      setCoach('chip');
-      const t = setTimeout(() => {
-        markSeen('chip');
-        setCoach((c) => (c === 'chip' ? null : c));
-      }, 8000);
-      return () => clearTimeout(t);
-    }
-    return undefined;
-  }, [favorites.length]);
+    if (!autoRouteId) return undefined;
+    const t = setTimeout(() => {
+      setAutoRouteId(null);
+      flash('지금 운행 중인 버스를 못 찾았어요.');
+    }, 12000);
+    return () => clearTimeout(t);
+  }, [autoRouteId, flash]);
 
-  const dismissCoach = () => {
-    setCoach((c) => {
-      if (c) markSeen(c);
-      return null;
-    });
-  };
-
-  const applyRot = useCallback((deg, src) => {
-    rotSrcRef.current = src;
-    mapRotRef.current = deg;
-    rotEl.current?.style.setProperty('--map-rot', `${deg}deg`);
+  const onBusClick = useCallback((info) => {
+    setResults(null);
+    setStopPop(null);
+    setPopup(info);
   }, []);
 
-  // 추적 모드: 바라보는 방향이 항상 지도 12시가 되도록 지도를 -heading 만큼 회전
-  const onHeading = useCallback(
-    (deg) => applyRot(-deg, 'follow'),
-    [applyRot],
+  const onStopClick = useCallback((s) => {
+    setResults(null);
+    setPopup(null);
+    setStopPop({ arsId: s.arsId, name: s.name, loading: true, error: false, arrivals: null });
+  }, []);
+
+  const startTrack = useCallback(
+    (info) => {
+      exitFollow(); // 내 위치 추적과 상호 배타
+      setTracked({
+        routeId: info.routeId,
+        routeNo: info.routeNo,
+        routeTp: info.routeTp,
+        vehicleNo: info.vehicleNo,
+      });
+      setTrackStat(info);
+      setPopup(null);
+      setStopPop(null);
+      setAutoRouteId(null);
+      if (map && map.getLevel() > 5) map.setLevel(4);
+    },
+    [exitFollow, map],
   );
 
-  const { follow, onFab, exitFollow } = useMyLocation(map, onHeading);
-
-  useEffect(() => {
-    window.kakao.maps.load(() => {
-      const m = new window.kakao.maps.Map(mapEl.current, {
-        center: new window.kakao.maps.LatLng(FALLBACK.lat, FALLBACK.lng),
-        level: 4,
-      });
-      window.kakao.maps.event.addListener(m, 'click', () => {
-        setResults(null);
-        setPopup(null);
-        setStopPop(null);
-      });
-      setMap(m);
+  const onTrackStat = useCallback((info) => {
+    setTrackStat(info);
+    const now = Date.now();
+    if (now - lastSaveRef.current < SAVE_MIN_MS) return;
+    lastSaveRef.current = now;
+    saveTrack({
+      routeId: info.routeId,
+      routeNo: info.routeNo,
+      routeTp: info.routeTp,
+      vehicleNo: info.vehicleNo,
+      lat: info.lat,
+      lng: info.lng,
     });
   }, []);
 
-  useEffect(() => {
-    followRef.current = follow;
-  }, [follow]);
+  const onTrackLost = useCallback(() => {
+    setTracked(null);
+    flash('추적하던 버스가 운행을 마쳤어요.');
+  }, [flash]);
 
-  // 버스 위치 트래킹 중 지도를 직접 드래그하면 해제
+  const handleFab = () => {
+    setCentering(false); // 내 위치를 보겠다는 뜻 — 버스 따라가기는 잠시 멈춤
+    onFab();
+  };
+
+  const northUp = () => applyRot(0, 'manual');
+
+  // 노선 칩 탭 = 이 노선에서 나에게 오고 있는 가장 가까운 버스를 바로 추적
+  const onChip = (r) => {
+    if (tracked?.routeId === r.routeId) {
+      setCentering(true); // 이미 추적 중이면 다시 지도 중앙으로
+      return;
+    }
+    setAutoRouteId(r.routeId);
+  };
+
+  const removeRoute = (r) => {
+    if (tracked?.routeId === r.routeId) setTracked(null);
+    if (autoRouteId === r.routeId) setAutoRouteId(null);
+    toggle(r);
+  };
+
+  // 추적 중인 버스가 지도를 직접 움직이면 '따라가기'만 끈다(추적 자체는 유지)
   useEffect(() => {
     if (!map || !tracked) return undefined;
     const { kakao } = window;
-    const release = () => setTracked(null);
+    const release = () => setCentering(false);
     kakao.maps.event.addListener(map, 'dragstart', release);
     return () => kakao.maps.event.removeListener(map, 'dragstart', release);
   }, [map, tracked]);
-
-  const startTrack = (info) => {
-    exitFollow(); // 내 위치 추적과 상호 배타
-    setTracked({ routeId: info.routeId, vehicleNo: info.vehicleNo, routeNo: info.routeNo });
-    setPopup(null);
-    setStopPop(null);
-  };
-
-  const handleFab = () => {
-    setTracked(null);
-    onFab();
-  };
 
   // 추적 해제 시(드래그/줌 등) 정북으로 복귀 — 단, 사용자가 직접 돌린 각도는 유지
   useEffect(() => {
@@ -253,7 +334,7 @@ export default function App() {
           pan = null;
           return;
         }
-        setTracked(null); // 직접 이동 → 트래킹 해제
+        setCentering(false); // 직접 이동 → 버스 따라가기 중단
         e.stopPropagation();
         e.preventDefault();
         const t = e.touches[0];
@@ -291,7 +372,6 @@ export default function App() {
         if (m < 4 || m > 356) r = Math.round(r / 360) * 360; // 정북 근처 스냅
         applyRot(r, 'manual');
         exitFollow();
-        setTracked(null); // tilt → 트래킹 해제
         return;
       }
 
@@ -342,7 +422,6 @@ export default function App() {
 
   async function search(e) {
     e.preventDefault();
-    if (coach === 'search') dismissCoach();
     const q = query.trim();
     if (!q) return;
     setSearching(true);
@@ -364,6 +443,14 @@ export default function App() {
     setInstallEvt(null);
   }
 
+  // 하단 카드에 보여줄 버스: 추적 중이면 그 버스(실시간), 아니면 방금 탭한 버스.
+  // 복원 직후엔 아직 실시간 정보가 없으므로(live=null) '불러오는 중'으로 표시한다.
+  const isTracked = Boolean(tracked);
+  const live =
+    isTracked && trackStat && trackStat.vehicleNo === tracked.vehicleNo ? trackStat : null;
+  const card = isTracked ? { ...tracked, ...(live || {}) } : popup;
+  const pending = isTracked && !live;
+
   return (
     <div className="app">
       <div className="map-stage" ref={stageEl}>
@@ -373,42 +460,40 @@ export default function App() {
       </div>
 
       <div className="topbar">
-        {tracked && (
-          <div className="trackbar">
-            <span>
-              <b>{tracked.routeNo}</b> {tracked.vehicleNo} 따라가는 중
-            </span>
-            <button type="button" onClick={() => setTracked(null)}>
-              해제
-            </button>
-          </div>
-        )}
-
         <form className="search" onSubmit={search}>
+          <span className="search__icon" aria-hidden="true">
+            <svg viewBox="0 0 20 20" width="18" height="18">
+              <circle cx="8.5" cy="8.5" r="5.5" fill="none" stroke="#7b8394" strokeWidth="2" />
+              <path d="M12.8 12.8 L18 18" stroke="#7b8394" strokeWidth="2" strokeLinecap="round" />
+            </svg>
+          </span>
           <input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="버스 번호 검색 (예: 273, 마포06)"
+            placeholder="버스 번호 (예: 273, 마포06)"
+            enterKeyHint="search"
           />
-          <button type="submit" disabled={searching}>
-            {searching ? '…' : '검색'}
-          </button>
-          {installEvt && (
-            <button type="button" className="install" onClick={install}>
-              설치
+          {query && (
+            <button
+              type="button"
+              className="search__clear"
+              aria-label="지우기"
+              onClick={() => {
+                setQuery('');
+                setResults(null);
+              }}
+            >
+              ×
             </button>
           )}
-        </form>
-
-        {coach === 'search' && (
-          <button type="button" className="coach" onClick={dismissCoach}>
-            버스 번호로 검색해 노선을 추가하세요 · 예: 273, 마포06
+          <button type="submit" className="search__go" disabled={searching}>
+            {searching ? '…' : '검색'}
           </button>
-        )}
+        </form>
 
         {results && (
           <ul className="results">
-            {results.length === 0 && <li className="empty">검색 결과 없음</li>}
+            {results.length === 0 && <li className="empty">검색 결과가 없어요</li>}
             {results.map((r) => (
               <li
                 key={r.routeId}
@@ -416,10 +501,12 @@ export default function App() {
                 onClick={() => {
                   if (!has(r.routeId)) toggle(r);
                   setResults(null);
+                  setQuery('');
                 }}
               >
-                <span className="dot" style={{ background: routeTypeColor(r.routeTp) }} />
-                <span className="no">{r.routeNo}</span>
+                <span className="no" style={{ background: routeTypeColor(r.routeTp) }}>
+                  {r.routeNo}
+                </span>
                 <span className="ends">
                   {r.start} ↔ {r.end}
                 </span>
@@ -432,22 +519,23 @@ export default function App() {
         {favorites.length > 0 && (
           <div className="faves">
             {favorites.map((r) => {
-              const off = r.enabled === false;
+              const on = tracked?.routeId === r.routeId;
+              const busy = autoRouteId === r.routeId;
               return (
                 <span
                   key={r.routeId}
-                  className={`chip${off ? ' chip--off' : ''}`}
-                  style={{ borderColor: off ? '#c2c2c2' : routeTypeColor(r.routeTp) }}
+                  className={`chip${on ? ' chip--on' : ''}`}
+                  style={{ '--chip': routeTypeColor(r.routeTp) }}
                 >
-                  <button
-                    className="chip__no"
-                    onClick={() => toggleEnabled(r.routeId)}
-                    aria-pressed={!off}
-                    title={off ? '지도에 표시' : '지도에서 숨기기'}
-                  >
+                  <button className="chip__no" onClick={() => onChip(r)}>
                     {r.routeNo}
+                    {busy && <i className="chip__dot" />}
                   </button>
-                  <button className="chip__x" onClick={() => toggle(r)} aria-label="삭제">
+                  <button
+                    className="chip__x"
+                    onClick={() => removeRoute(r)}
+                    aria-label={`${r.routeNo} 삭제`}
+                  >
                     ×
                   </button>
                 </span>
@@ -455,142 +543,184 @@ export default function App() {
             })}
           </div>
         )}
-
-        {coach === 'chip' && (
-          <button type="button" className="coach" onClick={dismissCoach}>
-            노선 번호를 탭하면 지도에서 껐다 켤 수 있어요 · × 는 삭제
-          </button>
-        )}
       </div>
 
-      <button
-        className={`fab${follow ? ' fab--follow' : ''}`}
-        onClick={handleFab}
-        aria-label="현재 위치"
-      >
-        ◎
-      </button>
+      <div className="bottom">
+        {toast && <div className="toast">{toast}</div>}
 
-      {popup && (
-        <div className="buspop">
-          <button className="buspop__x" onClick={() => setPopup(null)} aria-label="닫기">
-            ×
-          </button>
-          <div className="buspop__head">
-            <span
-              className="buspop__badge"
-              style={{ background: routeTypeColor(popup.routeTp) }}
-            >
-              {popup.routeNo}
-            </span>
-            <span className="buspop__veh">{popup.vehicleNo}</span>
-            {popup.lowFloor && <span className="buspop__tag">저상</span>}
-          </div>
-          <dl className="buspop__info">
-            {popup.nextStopName && (
-              <>
-                <dt>다음 정류장</dt>
-                <dd>
-                  {popup.nextStopName}
-                  {etaText(popup.nextStTm) ? ` · ${etaText(popup.nextStTm)}` : ''}
-                </dd>
-              </>
-            )}
-            <dt>혼잡도</dt>
-            <dd>{CONGESTION[popup.congestion] || '정보 없음'}</dd>
-            {popup.stopFlag === 1 && (
-              <>
-                <dt>상태</dt>
-                <dd>정류장 정차 중</dd>
-              </>
-            )}
-            {agoText(popup.dataTm) && (
-              <>
-                <dt>위치 기준</dt>
-                <dd>{agoText(popup.dataTm)}</dd>
-              </>
-            )}
-          </dl>
-          <button className="buspop__track" onClick={() => startTrack(popup)}>
-            이 버스 위치 트래킹
+        <div className="fabs">
+          {rotated && !follow && (
+            <button className="fab fab--sm" onClick={northUp} aria-label="북쪽으로 정렬">
+              N
+            </button>
+          )}
+          {installEvt && (
+            <button className="fab fab--sm" onClick={install} aria-label="앱 설치">
+              ↓
+            </button>
+          )}
+          <button
+            className={`fab${follow ? ' fab--follow' : ''}`}
+            onClick={handleFab}
+            aria-label="현재 위치"
+          >
+            ◎
           </button>
         </div>
-      )}
 
-      {stopPop && (
-        <div className="buspop stoppop">
-          <button className="buspop__x" onClick={() => setStopPop(null)} aria-label="닫기">
-            ×
-          </button>
-          <div className="buspop__head">
-            <span className="stoppop__pin">■</span>
-            <span className="buspop__veh">{stopPop.name || '정류장'}</span>
-            {stopPop.arsId && <span className="buspop__tag">{stopPop.arsId}</span>}
+        {stopPop ? (
+          <div className="sheet sheet--scroll">
+            <button className="sheet__x" onClick={() => setStopPop(null)} aria-label="닫기">
+              ×
+            </button>
+            <div className="sheet__head">
+              <span className="sheet__veh">{stopPop.name || '정류장'}</span>
+              {stopPop.arsId && <span className="tag">{stopPop.arsId}</span>}
+            </div>
+            {stopPop.loading && <p className="sheet__msg">도착 정보를 불러오는 중…</p>}
+            {!stopPop.loading && stopPop.error && (
+              <p className="sheet__msg">도착 정보를 불러올 수 없어요.</p>
+            )}
+            {!stopPop.loading && !stopPop.error && stopPop.arrivals?.length === 0 && (
+              <p className="sheet__msg">도착 예정 버스가 없어요.</p>
+            )}
+            {!stopPop.loading && !stopPop.error && stopPop.arrivals?.length > 0 && (
+              <ul className="arr">
+                {stopPop.arrivals.map((a) => (
+                  <li key={a.routeId || a.routeNo}>
+                    <span className="arr__no" style={{ background: routeTypeColor(a.routeType) }}>
+                      {a.routeNo}
+                    </span>
+                    <span className="arr__body">
+                      {a.dir && <span className="arr__dir">{a.dir} 방면</span>}
+                      <span className="arr__t1">{a.arr1 ? a.arr1.msg : '정보 없음'}</span>
+                      {a.arr2 && <span className="arr__t2">다음: {a.arr2.msg}</span>}
+                    </span>
+                    {a.routeId && (
+                      <button
+                        className={`arr__add${has(a.routeId) ? ' is-added' : ''}`}
+                        disabled={has(a.routeId)}
+                        onClick={() =>
+                          toggle({ routeId: a.routeId, routeNo: a.routeNo, routeTp: a.routeType })
+                        }
+                      >
+                        {has(a.routeId) ? '추가됨' : '추가'}
+                      </button>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            )}
           </div>
-          {stopPop.loading && <p className="stoppop__msg">도착 정보를 불러오는 중…</p>}
-          {!stopPop.loading && stopPop.error && (
-            <p className="stoppop__msg">도착 정보를 불러올 수 없어요.</p>
-          )}
-          {!stopPop.loading && !stopPop.error && stopPop.arrivals?.length === 0 && (
-            <p className="stoppop__msg">도착 예정 버스가 없어요.</p>
-          )}
-          {!stopPop.loading && !stopPop.error && stopPop.arrivals?.length > 0 && (
-            <ul className="arr">
-              {stopPop.arrivals.map((a) => (
-                <li key={a.routeId || a.routeNo}>
-                  <span
-                    className="arr__no"
-                    style={{ background: routeTypeColor(a.routeType) }}
-                  >
-                    {a.routeNo}
+        ) : card ? (
+          <div className={`sheet${isTracked ? ' sheet--live' : ''}`}>
+            <button
+              className="sheet__x"
+              onClick={() => (isTracked ? setTracked(null) : setPopup(null))}
+              aria-label="닫기"
+            >
+              ×
+            </button>
+            <div className="sheet__head">
+              <span className="badge" style={{ background: routeTypeColor(card.routeTp) }}>
+                {card.routeNo}
+              </span>
+              <span className="sheet__veh">{card.vehicleNo}</span>
+              {card.lowFloor && <span className="tag">저상</span>}
+              {isTracked && <span className="tag tag--live">추적 중</span>}
+            </div>
+
+            {pending ? (
+              <p className="lead lead--dim">버스 위치를 불러오는 중…</p>
+            ) : card.dest ? (
+              card.dest.passed ? (
+                <p className="lead lead--dim">{card.dest.name} 이미 지나갔어요</p>
+              ) : card.dest.stopsAway === 0 ? (
+                <p className="lead lead--now">
+                  <b>{card.dest.name}</b> 도착 — 지금 타세요
+                </p>
+              ) : (
+                <p className="lead">
+                  <b>{card.dest.stopsAway}</b>정거장 전 · <b>{minText(card.dest.etaSec)}</b>
+                  <span className="lead__sub">
+                    {card.dest.name}까지 {card.dest.meters}m
                   </span>
-                  <span className="arr__body">
-                    {a.dir && <span className="arr__dir">{a.dir} 방면</span>}
-                    <span className="arr__t1">{a.arr1 ? a.arr1.msg : '정보 없음'}</span>
-                    {a.arr2 && <span className="arr__t2">다음: {a.arr2.msg}</span>}
-                  </span>
-                  {a.routeId && (
-                    <button
-                      className={`arr__add${has(a.routeId) ? ' is-added' : ''}`}
-                      disabled={has(a.routeId)}
-                      onClick={() =>
-                        toggle({
-                          routeId: a.routeId,
-                          routeNo: a.routeNo,
-                          routeTp: a.routeType,
-                        })
-                      }
-                    >
-                      {has(a.routeId) ? '추가됨' : '추가'}
+                </p>
+              )
+            ) : (
+              <p className="lead lead--dim">
+                {myPos
+                  ? '이 노선의 정류장이 근처에 없어요'
+                  : '현재 위치를 켜면 몇 정거장 남았는지 알려줘요'}
+              </p>
+            )}
+
+            {!pending && (
+              <div className="meta">
+                <span className={card.stopFlag === 1 ? 'meta--stop' : ''}>
+                  {card.stopFlag === 1 ? '정류장 정차 중' : card.moving ? '운행 중' : '신호 대기'}
+                </span>
+                {card.nextStopName && <span>다음 {card.nextStopName}</span>}
+                {CONGESTION[card.congestion] && <span>{CONGESTION[card.congestion]}</span>}
+                {agoText(card.dataTm) && (
+                  <span className="meta__ago">{agoText(card.dataTm)} 정보</span>
+                )}
+              </div>
+            )}
+
+            <div className="acts">
+              {isTracked ? (
+                <>
+                  {!centering && (
+                    <button className="btn btn--primary" onClick={() => setCentering(true)}>
+                      버스로 이동
                     </button>
                   )}
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-      )}
+                  <button className="btn btn--ghost" onClick={() => setTracked(null)}>
+                    추적 해제
+                  </button>
+                </>
+              ) : (
+                <button className="btn btn--primary" onClick={() => startTrack(card)}>
+                  이 버스 추적하기
+                </button>
+              )}
+            </div>
+          </div>
+        ) : favorites.length === 0 ? (
+          <div className="sheet sheet--hint">
+            <b>버스 번호를 검색해 추가해 보세요.</b>
+            <span>
+              추가한 노선 칩을 탭하면 나에게 오고 있는 가장 가까운 버스를 바로 따라갑니다.
+            </span>
+          </div>
+        ) : null}
+      </div>
 
       {map && <StopsLayer map={map} onStopClick={onStopClick} />}
 
       {map &&
-        favorites
-          .filter((r) => r.enabled !== false)
-          .map((r) => (
-            <ErrorBoundary key={r.routeId} fallback={null}>
-              <RouteLayer
-                map={map}
-                route={r}
-                onBusClick={onBusClick}
-                trackedVehicleNo={
-                  tracked && tracked.routeId === r.routeId ? tracked.vehicleNo : null
-                }
-                selectedVehicleNo={
-                  popup && popup.routeId === r.routeId ? popup.vehicleNo : null
-                }
-              />
-            </ErrorBoundary>
-          ))}
+        favorites.map((r) => (
+          <ErrorBoundary key={r.routeId} fallback={null}>
+            <RouteLayer
+              map={map}
+              route={r}
+              bus={{
+                onBusClick,
+                onAutoTrack: startTrack,
+                onTrackStat,
+                onTrackLost,
+                myPos,
+                trackCentering: centering,
+                trackedVehicleNo:
+                  tracked && tracked.routeId === r.routeId ? tracked.vehicleNo : null,
+                selectedVehicleNo:
+                  popup && popup.routeId === r.routeId ? popup.vehicleNo : null,
+                autoTrack: autoRouteId === r.routeId,
+              }}
+            />
+          </ErrorBoundary>
+        ))}
     </div>
   );
 }

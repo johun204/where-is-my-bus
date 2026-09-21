@@ -57,10 +57,10 @@ assert.ok(hinted.along < half, `hint → stays on outbound leg: ${hinted.along}`
 // leadAlong: 정류장 없는 구간은 그냥 speed*t
 const noStops = [];
 assert.strictEqual(leadAlong(100, 10, 6, noStops), 160, 'no stops → linear');
-// 정류장이 리드 구간 안(150m 지점)에 있으면 거기서 DWELL(5s) 만큼 시간 소진 →
-// speed 10, lead 10s: 5s 만에 150 도달, 남은 5s 중 5s 는 정차 → 정류장 부근에 머묾
+// 정류장이 리드 구간 안(150m 지점)에 있으면 거기서 DWELL(3.5s) 만큼 시간 소진 →
+// speed 10, lead 10s: 5s 만에 150 도달, 3.5s 정차, 남은 1.5s 주행 → 165m
 const near = leadAlong(100, 10, 10, [150]);
-assert.ok(near >= 150 && near <= 156, `dwell caps at stop: ${near}`);
+assert.ok(near >= 150 && near <= 170, `dwell caps at stop: ${near}`);
 // 정류장 한참 뒤(리드로 도달 불가)면 정류장 무시
 assert.strictEqual(leadAlong(100, 10, 3, [500]), 130, 'far stop ignored');
 // speed 거의 0 이면 그대로

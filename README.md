@@ -15,17 +15,50 @@ api/                    Vercel Python Serverless (서울시 버스 API 프록시
   route.py              GET /api/route?routeNo=  또는  ?routeId=       (검색 getBusRouteList / 정류장 getStaionByRoute + 도로형상 getRoutePath)
   arrivals.py           GET /api/arrivals?arsId=<ARS>                  (정류장 도착예정, stationinfo/getStationByUid — 서울시_정류소정보조회 서비스 15000303 활용신청 필요)
 src/
-  App.jsx                      모바일 UI(검색바/즐겨찾기 칩/현위치 FAB), 두 손가락 지도 회전(오버사이즈 래퍼 CSS transform), PWA 설치버튼
-  map/useMyLocation.js         watchPosition 연속 추적 + 추적 모드(지도 팔로우 + 나침반 방위로 지도 12시 정렬)
-  hooks/useFavoriteRoutes.js   즐겨찾기 노선 localStorage 영속화
+  App.jsx                      화면 전체: 상단 검색·노선칩, 하단 정보카드(핵심 정보는 엄지 영역), 두 손가락 지도 회전, 추적 상태 영속화
+  map/predict.js               ★ 위치 보정 모델(순수함수) — 정차/신호/주행 3케이스 + 전방편향. predict.test.mjs 로 검증
+  map/busPath.js               경로 투영 + 경로를 따라가는 보간(leadAlong)
+  map/useBusMarkers.js         폴링·속도추정·보정 적용·마커 애니메이션·추적/자동선택/도착정보 산출
+  map/useMyLocation.js         watchPosition 연속 추적 + 추적 모드(지도 팔로우 + 나침반 방위로 지도 12시 정렬), 현위치 좌표 제공
+  map/busOverlay.js            버스 마커(노선색 SVG + 노선번호), setScale 축척 연동, setActive 추적 강조
+  map/StopsLayer.jsx           화면에 보이는 정류장 마커 + 이름 라벨 (탭하면 도착정보)
+  map/RouteLayer.jsx           노선 1개 = 경로선 + 버스
+  map/drawRoute.js             Polyline
   map/routeColor.js            노선유형 → 색상 (간선 파랑 / 지선 초록 / 광역 빨강 / 순환 노랑)
-  map/busPath.js               경로 투영 + 경로를 따라가는 보간 계산
-  map/busOverlay.js            버스 마커(노선색 SVG + 상단 노선번호), setScale로 축척 연동
-  map/drawRoute.js             Polyline + 정류장 점마커
-  map/useBusMarkers.js         폴링(접속직후 3s×3회 → 이후 10s) + 최근 3회 평균속도 추측항법(대기 중 전진, 응답 시 보정·재계산) + 줌 연동 스케일
-  map/RouteLayer.jsx           노선 1개 = 경로 + 정류장 + 버스
+  hooks/useFavoriteRoutes.js   즐겨찾기 노선 localStorage 영속화
 public/                 manifest(standalone·maskable) / service worker(HTML 네트워크 우선) / 아이콘
 ```
+
+## 위치 보정 (predict.js)
+
+API 는 `dataTm` 기준 몇 초 전 데이터이고 폴링 간격도 있어서, 받은 좌표를 그대로 찍으면
+화면의 버스가 **항상 실제보다 뒤에** 있다. 사용자는 "지금 뛰면 탈 수 있나"를 보므로
+뒤처지는 쪽이 앞서는 쪽보다 훨씬 치명적 → 불확실하면 앞으로 치우치게 잡는다.
+
+| 상태 | 판정 | 보정 |
+|------|------|------|
+| 정류장 정차 (`stopFlag=1`) | 위치를 그 정류장 좌표로 스냅 | 표준 승하차시간(11s) 전엔 제자리, 지나면 출발 가정 |
+| 정차인데 도착 아님 | 신호·횡단보도·정체 | 표준 대기(20s) 기준으로 동일 처리 |
+| 주행 중 | 최근 3회 실측 평균속도 | 도로형상을 따라 추측항법 + 앞 정류장에서 잠깐 지체 |
+
+①②의 핵심은 **"이미 얼마나 서 있었는지"**(`haltWall`)다. 방금 선 버스는 더 기다리지만
+20초째 서 있던 버스는 곧 출발하므로 `남은 대기 = 표준시간 - 이미 선 시간` 으로 잡는다.
+평균속도는 정차시간이 섞인 실효속도라, `busPath.DWELL_S` 는 표준 승하차시간보다 작게(3.5s) 둔다.
+
+보정 노브(현장에서 조정): `predict.js` 의 `BIAS_S`(전방편향) · `DWELL_TYPICAL` · `SIGNAL_TYPICAL` ·
+`RESUME_V`, `busPath.js` 의 `DWELL_S`.
+
+불변식: 마커는 **마지막 실측 위치보다 절대 뒤로 가지 않는다**(`useBusMarkers` 의 `st.along < st.refAlong` 가드).
+
+## 조작
+
+- 상단 검색 → 노선 추가 → 노선 **칩을 탭하면** 그 노선에서 나에게 오고 있는
+  가장 가까운 버스를 자동으로 골라 추적한다(`autoTrack`). 칩의 `×` 는 삭제.
+- 버스 마커 탭 → 하단 카드 → `이 버스 추적하기`.
+- 추적 중에는 **내 정류장까지 몇 정거장·몇 분**이 카드의 헤드라인. 지도를 직접 움직이면
+  따라가기만 멈추고(추적은 유지) `버스로 이동` 으로 되돌아간다.
+- 추적 상태는 localStorage(`busmap.track.v1`, 6시간) 에 차량번호·마지막 좌표까지 저장 →
+  **앱을 껐다 켜면 그 버스 위치에서 바로 시작**한다. 그 차량이 운행을 마쳤으면 안내 후 해제.
 
 ## 사용하는 공공데이터포털 API
 
@@ -56,7 +89,7 @@ npm run dev               # 터미널 2: 프론트 (:5173). /api 는 :8000 으�
 - 카카오 개발자 콘솔 Web 플랫폼 사이트 도메인에 `http://localhost:5173` 등록 필요.
 - `vercel dev` 는 Vercel 로그인이 필요하므로 로컬은 위 2-프로세스 방식을 사용.
 
-`busPath.js` 자체 검증: `node src/map/busPath.test.mjs`
+자체 검증(프레임워크 없음): `node src/map/busPath.test.mjs` · `node src/map/predict.test.mjs` · `python api/_util_test.py`
 
 ## Vercel 배포
 

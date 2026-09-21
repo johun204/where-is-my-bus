@@ -3,16 +3,11 @@ import { drawRoute } from './drawRoute';
 import { useBusMarkers } from './useBusMarkers';
 
 /**
- * 즐겨찾기 노선 하나를 지도에 얹는다: 경로선 + 정류장 점 + 실시간 버스.
+ * 즐겨찾기 노선 하나를 지도에 얹는다: 경로선 + 실시간 버스.
  * route: { routeId, routeNo, routeTp }
+ * bus: useBusMarkers 로 그대로 넘기는 옵션 묶음 (추적/선택/내 위치 등)
  */
-export function RouteLayer({
-  map,
-  route,
-  onBusClick,
-  trackedVehicleNo,
-  selectedVehicleNo,
-}) {
+export function RouteLayer({ map, route, bus }) {
   const [detail, setDetail] = useState(null); // { path, stops, routeTp }
 
   useEffect(() => {
@@ -39,7 +34,7 @@ export function RouteLayer({
   useBusMarkers(
     map,
     detail && { ...detail, routeId: route.routeId, routeNo: route.routeNo },
-    { onBusClick, trackedVehicleNo, selectedVehicleNo },
+    bus,
   );
 
   return null;

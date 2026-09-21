@@ -18,6 +18,7 @@ const innerTransform = (k) => `translate(-50%, -50%) scale(${k})`;
  *  setPosition(latlng)  위치 이동
  *  setHeading(deg)      진행방향으로 아이콘만 회전 (멈춰 있어도 항상 표시)
  *  setScale(k)          지도 축척에 맞춰 아이콘·번호 함께 확대축소
+ *  setActive(on)        추적/선택 중 강조(맥동 링)
  */
 export function createBusOverlay(map, latlng, color, routeNo, scale = 1, onClick) {
   const { kakao } = window;
@@ -64,6 +65,10 @@ export function createBusOverlay(map, latlng, color, routeNo, scale = 1, onClick
     },
     setScale: (k) => {
       inner.style.transform = innerTransform(k);
+    },
+    setActive: (on) => {
+      inner.classList.toggle('bus-ovl--active', !!on);
+      overlay.setZIndex(on ? 7 : 5);
     },
     remove: () => overlay.setMap(null),
   };

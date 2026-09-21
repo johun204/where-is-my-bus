@@ -1,10 +1,23 @@
+/* 한 손으로, 걸어가면서, 햇빛 아래에서 보는 화면이 기준.
+   → 큰 터치 영역(최소 44px), 높은 대비, 중요한 정보는 아래쪽(엄지 닿는 곳)에. */
+:root {
+  --accent: #1a73e8; /* 실시간/추적 */
+  --ink: #16181d;
+  --ink-dim: #6b7280;
+  --line: #e9ebef;
+  --surface: #fff;
+  --shadow: 0 6px 24px rgba(16, 24, 40, 0.18);
+}
+
 * { box-sizing: border-box; }
 html, body, #root { margin: 0; height: 100%; }
 body {
   font-family: system-ui, -apple-system, 'Apple SD Gothic Neo', sans-serif;
+  color: var(--ink);
   overscroll-behavior: none;
   -webkit-tap-highlight-color: transparent;
 }
+button { font-family: inherit; }
 
 .app { position: fixed; inset: 0; background: #0c0c0c; }
 
@@ -30,75 +43,96 @@ body {
 }
 .map { position: absolute; inset: 0; }
 
-/* 상단 검색 바 */
+/* ── 상단: 검색 + 노선 칩 ───────────────────────────────── */
 .topbar {
   position: absolute;
-  top: calc(env(safe-area-inset-top, 0px) + 8px);
-  left: 8px;
-  right: 8px;
+  top: calc(env(safe-area-inset-top, 0px) + 10px);
+  left: 10px;
+  right: 10px;
   z-index: 10;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 8px;
 }
+
 .search {
   display: flex;
-  gap: 6px;
-  padding: 6px;
-  background: #fff;
-  border-radius: 12px;
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.18);
+  align-items: center;
+  gap: 4px;
+  padding: 5px 5px 5px 12px;
+  background: var(--surface);
+  border-radius: 14px;
+  box-shadow: var(--shadow);
 }
+.search__icon { display: flex; flex: none; }
 .search input {
   flex: 1;
   min-width: 0;
   border: 0;
   outline: 0;
-  padding: 10px 12px;
+  padding: 12px 8px;
   font-size: 16px; /* iOS 자동 확대 방지 */
-  background: #f2f3f5;
-  border-radius: 8px;
+  background: transparent;
 }
-.search button {
+.search__clear {
+  flex: none;
+  width: 30px;
+  height: 30px;
+  border: 0;
+  border-radius: 50%;
+  background: #eef0f3;
+  color: #6b7280;
+  font-size: 17px;
+  line-height: 1;
+}
+.search__go {
   flex: none;
   min-height: 40px;
-  padding: 0 14px;
+  padding: 0 16px;
   border: 0;
-  border-radius: 8px;
-  background: #3d5bab;
+  border-radius: 10px;
+  background: var(--accent);
   color: #fff;
   font-size: 14px;
-  font-weight: 600;
+  font-weight: 700;
 }
-.search .install { background: #111; }
+.search__go:disabled { opacity: 0.6; }
 
 .results {
   list-style: none;
   margin: 0;
   padding: 4px;
-  max-height: 45vh;
+  max-height: 46vh;
   overflow-y: auto;
-  background: #fff;
-  border-radius: 12px;
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.18);
+  background: var(--surface);
+  border-radius: 14px;
+  box-shadow: var(--shadow);
 }
 .results li {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 11px 8px;
-  border-bottom: 1px solid #eee;
+  gap: 10px;
+  padding: 12px 8px;
+  border-bottom: 1px solid var(--line);
   cursor: pointer;
 }
 .results li:last-child { border-bottom: 0; }
-.results li:active { background: #f2f4fb; }
-.results .dot { flex: none; width: 10px; height: 10px; border-radius: 50%; }
-.results .no { font-weight: 700; }
+.results li:active { background: #f3f5f9; }
+.results .no {
+  flex: none;
+  min-width: 52px;
+  padding: 5px 8px;
+  border-radius: 8px;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 800;
+  text-align: center;
+}
 .results .ends {
   flex: 1;
   min-width: 0;
   font-size: 12px;
-  color: #666;
+  color: var(--ink-dim);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -106,67 +140,266 @@ body {
 .results .mark {
   flex: none;
   font-size: 12px;
-  font-weight: 600;
-  color: #3d5bab;
+  font-weight: 700;
+  color: var(--accent);
 }
-.results li.is-added .mark { color: #999; }
-.results .empty { justify-content: center; color: #999; cursor: default; }
+.results li.is-added .mark { color: #b0b5bd; }
+.results .empty { justify-content: center; color: #9aa0a8; cursor: default; }
 
-/* 온보딩 안내 말풍선 */
-.coach {
-  align-self: stretch;
-  text-align: left;
-  border: 0;
-  border-radius: 10px;
-  padding: 10px 12px;
-  background: #111;
-  color: #fff;
-  font-size: 13px;
-  line-height: 1.4;
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.25);
-}
-.coach::after {
-  content: ' ✕';
-  opacity: 0.6;
-  font-size: 11px;
-}
-
+/* 노선 칩 — 탭하면 그 노선에서 나에게 오는 버스를 바로 추적 */
 .faves {
   display: flex;
-  gap: 6px;
+  gap: 7px;
   overflow-x: auto;
-  padding: 2px;
-  -webkit-overflow-scrolling: touch;
+  padding: 2px 0 4px;
+  scrollbar-width: none;
 }
+.faves::-webkit-scrollbar { display: none; }
 .chip {
   flex: none;
   display: inline-flex;
   align-items: stretch;
-  background: #fff;
-  border: 2px solid #3d5bab;
+  background: var(--surface);
+  border: 2px solid var(--chip, #3d5bab);
   border-radius: 999px;
-  font-size: 13px;
-  font-weight: 700;
+  font-size: 14px;
+  font-weight: 800;
   overflow: hidden;
-  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.15);
+  box-shadow: 0 2px 8px rgba(16, 24, 40, 0.14);
 }
-.chip--off { opacity: 0.55; }
+.chip--on { background: var(--chip, #3d5bab); border-color: var(--chip, #3d5bab); }
 .chip__no {
+  position: relative;
   border: 0;
   background: transparent;
   font: inherit;
-  color: #222;
-  padding: 5px 8px 5px 12px;
+  color: var(--ink);
+  padding: 8px 10px 8px 14px;
 }
-.chip--off .chip__no { text-decoration: line-through; }
+.chip--on .chip__no { color: #fff; }
+.chip__dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-left: 5px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: pulse 0.9s ease-in-out infinite;
+}
+.chip--on .chip__dot { background: #fff; }
 .chip__x {
   border: 0;
-  background: rgba(0, 0, 0, 0.08);
-  color: #333;
-  padding: 0 9px;
-  font-size: 15px;
+  background: rgba(0, 0, 0, 0.07);
+  color: #4b5563;
+  padding: 0 11px;
+  font-size: 16px;
   line-height: 1;
 }
+.chip--on .chip__x { background: rgba(255, 255, 255, 0.24); color: #fff; }
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.25; }
+}
+
+/* ── 하단: 알림 + FAB + 정보 카드 (엄지 영역) ─────────────── */
+.bottom {
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 12px);
+  z-index: 12;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 10px;
+  pointer-events: none; /* 지도 조작을 막지 않음 — 자식만 눌림 */
+}
+.bottom > * { pointer-events: auto; }
+
+.toast {
+  align-self: center;
+  max-width: 100%;
+  padding: 10px 14px;
+  border-radius: 12px;
+  background: rgba(22, 24, 29, 0.92);
+  color: #fff;
+  font-size: 13px;
+  box-shadow: var(--shadow);
+}
+
+.fabs {
+  align-self: flex-end;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.fab {
+  width: 50px;
+  height: 50px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--surface);
+  color: #3d5bab;
+  font-size: 22px;
+  box-shadow: var(--shadow);
+}
+.fab:active { background: #eef0f3; }
+.fab--sm { width: 42px; height: 42px; font-size: 15px; font-weight: 800; align-self: flex-end; }
+.fab--follow {
+  background: var(--accent);
+  color: #fff;
+  box-shadow: 0 0 0 3px rgba(26, 115, 232, 0.28), var(--shadow);
+}
+
+/* 정보 카드 (버스 / 정류장 / 안내) */
+.sheet {
+  position: relative;
+  padding: 16px 16px 14px;
+  border-radius: 18px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+.sheet--scroll { max-height: 58vh; overflow-y: auto; }
+.sheet--live { box-shadow: 0 0 0 2px var(--accent), var(--shadow); }
+.sheet--hint {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+  color: var(--ink-dim);
+}
+.sheet--hint b { font-size: 15px; color: var(--ink); }
+.sheet__x {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 38px;
+  height: 38px;
+  border: 0;
+  background: transparent;
+  font-size: 21px;
+  color: #aeb4bd;
+}
+.sheet__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-right: 34px;
+  margin-bottom: 10px;
+}
+.sheet__veh {
+  font-weight: 700;
+  font-size: 15px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sheet__msg { margin: 8px 2px 0; color: var(--ink-dim); font-size: 13px; }
+
+.badge {
+  flex: none;
+  padding: 4px 10px;
+  border-radius: 9px;
+  color: #fff;
+  font-weight: 800;
+  font-size: 16px;
+}
+.tag {
+  flex: none;
+  padding: 3px 8px;
+  border-radius: 7px;
+  background: #eef1f7;
+  color: #4a5568;
+  font-size: 11px;
+  font-weight: 700;
+}
+.tag--live { background: rgba(26, 115, 232, 0.12); color: var(--accent); }
+
+/* 카드의 핵심 한 줄 — "몇 정거장 남았나". 뛸지 말지는 이것만 보고 판단한다. */
+.lead {
+  margin: 0 0 10px;
+  font-size: 20px;
+  font-weight: 700;
+  line-height: 1.3;
+  letter-spacing: -0.2px;
+}
+.lead b { font-size: 24px; color: var(--accent); }
+.lead--now { color: #c0392b; }
+.lead--now b { color: #c0392b; }
+.lead--dim { font-size: 14px; font-weight: 500; color: var(--ink-dim); }
+.lead__sub {
+  display: block;
+  margin-top: 2px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--ink-dim);
+}
+
+.meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  margin-bottom: 12px;
+  font-size: 12.5px;
+  color: var(--ink-dim);
+}
+.meta > span + span::before {
+  content: '·';
+  margin-right: 8px;
+  color: #ccd1d9;
+}
+.meta--stop { color: #c0392b; font-weight: 700; }
+.meta__ago { color: #aeb4bd; }
+
+.acts { display: flex; gap: 8px; }
+.btn {
+  flex: 1;
+  min-height: 46px;
+  border: 0;
+  border-radius: 12px;
+  font-size: 14.5px;
+  font-weight: 700;
+}
+.btn--primary { background: var(--accent); color: #fff; }
+.btn--ghost { background: #eef0f3; color: #4a5568; }
+.btn:active { filter: brightness(0.94); }
+
+/* 정류장 도착정보 목록 */
+.arr { list-style: none; margin: 4px 0 0; padding: 0; }
+.arr li {
+  display: flex;
+  gap: 10px;
+  padding: 11px 2px;
+  border-top: 1px solid var(--line);
+}
+.arr__no {
+  flex: none;
+  align-self: flex-start;
+  min-width: 46px;
+  text-align: center;
+  padding: 4px 6px;
+  border-radius: 8px;
+  color: #fff;
+  font-weight: 800;
+  font-size: 13px;
+}
+.arr__body { flex: 1; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.arr__dir { font-size: 11px; color: #9aa0a8; }
+.arr__t1 { font-size: 14px; color: var(--ink); font-weight: 700; }
+.arr__t2 { font-size: 12px; color: var(--ink-dim); }
+.arr__add {
+  flex: none;
+  align-self: center;
+  border: 0;
+  border-radius: 9px;
+  padding: 9px 13px;
+  background: rgba(26, 115, 232, 0.1);
+  color: var(--accent);
+  font-weight: 700;
+  font-size: 12px;
+}
+.arr__add.is-added { background: #f0f1f3; color: #a9afb7; }
 
 .crash {
   position: absolute;
@@ -182,42 +415,18 @@ body {
   color: #333;
 }
 .crash button {
-  padding: 8px 16px;
+  padding: 10px 18px;
   border: 0;
-  border-radius: 8px;
-  background: #3d5bab;
+  border-radius: 10px;
+  background: var(--accent);
   color: #fff;
-  font-weight: 600;
+  font-weight: 700;
 }
 
-/* 현위치 버튼 (우측 하단) */
-.fab {
-  position: absolute;
-  right: calc(env(safe-area-inset-right, 0px) + 14px);
-  bottom: calc(env(safe-area-inset-bottom, 0px) + 20px);
-  z-index: 10;
-  width: 48px;
-  height: 48px;
-  border: 0;
-  border-radius: 50%;
-  background: #fff;
-  color: #3d5bab;
-  font-size: 22px;
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.28);
-}
-.fab:active { background: #f0f0f0; }
-.fab--follow {
-  background: #1a73e8;
-  color: #fff;
-  box-shadow: 0 0 0 3px rgba(26, 115, 232, 0.3), 0 2px 10px rgba(0, 0, 0, 0.28);
-}
+/* ── 지도 위 오버레이 ────────────────────────────────────── */
 
 /* 현위치 표시 — 0×0 앵커 + 그 위 점/콘 */
-.myloc-anchor {
-  position: absolute;
-  width: 0;
-  height: 0;
-}
+.myloc-anchor { position: absolute; width: 0; height: 0; }
 .myloc-dot {
   position: absolute;
   left: 0;
@@ -226,7 +435,7 @@ body {
   height: 16px;
   margin: -8px 0 0 -8px;
   border-radius: 50%;
-  background: #1a73e8;
+  background: var(--accent);
   border: 3px solid #fff;
   box-shadow: 0 0 0 2px rgba(26, 115, 232, 0.33), 0 1px 4px rgba(0, 0, 0, 0.4);
 }
@@ -241,11 +450,7 @@ body {
 }
 
 /* 버스 마커 — Kakao 는 0×0 .bus-anchor 만 좌표에 고정, 보이는 부분은 그 위에 얹음 */
-.bus-anchor {
-  position: absolute;
-  width: 0;
-  height: 0;
-}
+.bus-anchor { position: absolute; width: 0; height: 0; }
 .bus-ovl {
   position: absolute;
   left: 0;
@@ -265,6 +470,24 @@ body {
   height: 46px;
   transform: translate(-50%, -50%);
 }
+/* 추적·선택 중인 버스는 맥동하는 링으로 한눈에 구분 */
+.bus-ovl--active::before {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 46px;
+  height: 46px;
+  margin: -23px 0 0 -23px;
+  border-radius: 50%;
+  border: 3px solid var(--accent);
+  animation: ring 1.4s ease-out infinite;
+  pointer-events: none;
+}
+@keyframes ring {
+  0% { transform: scale(0.72); opacity: 0.9; }
+  100% { transform: scale(1.25); opacity: 0; }
+}
 .bus-ovl__no {
   position: absolute;
   bottom: 100%;
@@ -279,6 +502,7 @@ body {
   border-radius: 7px;
   white-space: nowrap;
 }
+.bus-ovl--active .bus-ovl__no { background: var(--accent); }
 .bus-ovl__icon {
   width: 100%;
   height: 100%;
@@ -287,97 +511,8 @@ body {
   pointer-events: none;
 }
 
-/* 트래킹 상단 바 */
-.trackbar {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 10px 8px 14px;
-  border-radius: 10px;
-  background: #1a73e8;
-  color: #fff;
-  font-size: 13px;
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.22);
-}
-.trackbar span { flex: 1; min-width: 0; }
-.trackbar b { font-weight: 800; }
-.trackbar button {
-  flex: none;
-  border: 0;
-  border-radius: 7px;
-  padding: 5px 10px;
-  background: rgba(255, 255, 255, 0.22);
-  color: #fff;
-  font-weight: 700;
-  font-size: 12px;
-}
-
-/* 버스 정보 팝업 (하단 시트) */
-.buspop {
-  position: absolute;
-  left: 10px;
-  right: 10px;
-  bottom: calc(env(safe-area-inset-bottom, 0px) + 12px);
-  z-index: 12;
-  padding: 14px 16px 16px;
-  border-radius: 16px;
-  background: #fff;
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.28);
-}
-.buspop__x {
-  position: absolute;
-  top: 8px;
-  right: 8px;
-  width: 30px;
-  height: 30px;
-  border: 0;
-  background: transparent;
-  font-size: 20px;
-  color: #999;
-}
-.buspop__head { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
-.buspop__badge {
-  padding: 3px 9px;
-  border-radius: 8px;
-  color: #fff;
-  font-weight: 800;
-  font-size: 15px;
-}
-.buspop__veh { font-weight: 600; }
-.buspop__tag {
-  padding: 2px 7px;
-  border-radius: 6px;
-  background: #eef;
-  color: #3d5bab;
-  font-size: 11px;
-  font-weight: 700;
-}
-.buspop__info {
-  display: grid;
-  grid-template-columns: auto 1fr;
-  gap: 4px 14px;
-  margin: 0 0 12px;
-  font-size: 13px;
-}
-.buspop__info dt { color: #999; }
-.buspop__info dd { margin: 0; color: #222; }
-.buspop__track {
-  width: 100%;
-  border: 0;
-  border-radius: 10px;
-  padding: 12px;
-  background: #3d5bab;
-  color: #fff;
-  font-size: 14px;
-  font-weight: 700;
-}
-
 /* 정류장 마커(버스 정면 아이콘) + 이름 라벨 */
-.stop-wrap {
-  position: relative;
-  width: 16px;
-  height: 16px;
-}
+.stop-wrap { position: relative; width: 16px; height: 16px; }
 .stop-marker {
   position: relative;
   width: 16px;
@@ -407,46 +542,3 @@ body {
   text-shadow: 0 0 2px #fff, 0 0 2px #fff;
 }
 .hide-stop-names .stop-name { display: none; }
-
-/* 정류장 도착정보 팝업 */
-.stoppop { max-height: 60vh; overflow-y: auto; }
-.stoppop__pin { color: #3d5bab; font-size: 12px; }
-.stoppop__msg { margin: 6px 2px 0; color: #888; font-size: 13px; }
-.arr {
-  list-style: none;
-  margin: 4px 0 0;
-  padding: 0;
-}
-.arr li {
-  display: flex;
-  gap: 10px;
-  padding: 10px 2px;
-  border-top: 1px solid #eee;
-}
-.arr__no {
-  flex: none;
-  align-self: flex-start;
-  min-width: 40px;
-  text-align: center;
-  padding: 3px 6px;
-  border-radius: 7px;
-  color: #fff;
-  font-weight: 800;
-  font-size: 13px;
-}
-.arr__body { flex: 1; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-.arr__dir { font-size: 11px; color: #999; }
-.arr__t1 { font-size: 13px; color: #1a2b4a; font-weight: 600; }
-.arr__t2 { font-size: 12px; color: #888; }
-.arr__add {
-  flex: none;
-  align-self: center;
-  border: 0;
-  border-radius: 7px;
-  padding: 7px 12px;
-  background: #eef;
-  color: #3d5bab;
-  font-weight: 700;
-  font-size: 12px;
-}
-.arr__add.is-added { background: #f0f0f0; color: #999; }
