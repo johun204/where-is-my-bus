@@ -6,6 +6,7 @@ import {
   leadAlong,
   pointAtDistance,
   projectOnPath,
+  projectStopsAlong,
   sidxFor,
 } from './busPath.js';
 
@@ -65,6 +66,35 @@ assert.ok(near >= 150 && near <= 170, `dwell caps at stop: ${near}`);
 assert.strictEqual(leadAlong(100, 10, 3, [500]), 130, 'far stop ignored');
 // speed 거의 0 이면 그대로
 assert.strictEqual(leadAlong(100, 0.2, 10, [150]), 100, 'stopped bus stays');
+
+// projectStopsAlong: 왕복이 같은 도로(5.5m 차이)를 쓰는 노선.
+// 모든 정류장 좌표를 '오는 차선 쪽에 약간 더 가깝게' 두어, 순수 최근접 투영이라면
+// 가는 길 정류장까지 전부 오는 차선에 붙어버리는 상황을 만든다.
+{
+  const half = loop.cum[1]; // 반환점(동쪽 끝)까지 거리
+  const lat = 0.00003; // 가는 차선(0) 보다 오는 차선(0.00005) 에 가까움
+  const routeStops = [
+    { lat, lng: 0.01 },   // 가는 길
+    { lat, lng: 0.04 },   // 가는 길
+    { lat, lng: 0.0495 }, // 가는 길, 반환점 직전
+    { lat, lng: 0.045 },  // 오는 길
+    { lat, lng: 0.01 },   // 오는 길 (0번과 같은 위치, 반대 차선)
+  ];
+  const al = projectStopsAlong(loop, routeStops);
+
+  for (let i = 1; i < al.length; i++) {
+    assert.ok(al[i] >= al[i - 1], `순번대로 단조 증가: ${al}`);
+  }
+  assert.ok(al[0] < half && al[1] < half && al[2] < half, `가는 길은 반환점 앞: ${al}`);
+  assert.ok(al[3] > half && al[4] > half, `오는 길은 반환점 뒤: ${al}`);
+  // 같은 위치의 왕복 정류장이 경로 양쪽에 제대로 갈림
+  assert.ok(al[4] - al[0] > half, `왕복 정류장 분리: ${al}`);
+  // 순수 최근접이었다면 0번도 오는 차선(> half)에 붙었을 것
+  assert.ok(
+    projectOnPath(loop, routeStops[0]).along > half,
+    '최근접만으로는 반대 차선에 붙는 배치인지 확인',
+  );
+}
 
 // sidxFor: 오름차순 배열에서 along 이상 첫 인덱스
 assert.strictEqual(sidxFor([0, 100, 200, 300], 150), 2, 'sidx mid');

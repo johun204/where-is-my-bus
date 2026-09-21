@@ -5,6 +5,7 @@ import {
   haversine,
   pointAtDistance,
   projectOnPath,
+  projectStopsAlong,
   sidxFor,
 } from './busPath';
 import { V_STOP, predict } from './predict';
@@ -28,7 +29,6 @@ const INITIAL_SPEED = 5; // m/s 새 버스의 초기 속도 추정(첫 fix 라 �
 const RESTORE_MAX_MS = 25000; // 새로고침 복원: 저장상태가 이보다 오래되면 무시
 
 const STAT_MS = 1000; // 추적 중 카드 정보 갱신 주기
-const MY_STOP_MAX_M = 900; // 내 위치에서 이보다 먼 정류장은 '내 정류장'으로 안 봄
 const ETA_MIN_V = 3.5; // m/s ETA 계산에 쓰는 하한 속도(정차 중엔 실측이 0 이라 무한대가 됨)
 const ETA_DWELL_S = 12; // s ETA 에서 정류장 하나당 더하는 시간
 const MISS_LIMIT = 3; // 추적 차량이 연속 이만큼 안 보이면 운행종료로 판단
@@ -57,11 +57,11 @@ function zoomScale(level) {
 }
 
 // sectOrd + sectDist/fullSectDist(구간 진행률) 로 낸 경로상 위치. GPS 투영보다 안정적.
-function sectAlong(b, stopByOrd) {
+function sectAlong(b, stopAlongs) {
   const so = b.sectOrd;
-  if (!Number.isFinite(so) || so < 1 || so >= stopByOrd.length) return null;
-  const start = stopByOrd[so - 1];
-  const end = stopByOrd[so];
+  if (!Number.isFinite(so) || so < 1 || so >= stopAlongs.length) return null;
+  const start = stopAlongs[so - 1];
+  const end = stopAlongs[so];
   if (start == null || end == null || end <= start) return null;
   let f = 0.5;
   if (
@@ -85,7 +85,7 @@ function sectAlong(b, stopByOrd) {
  *   trackedVehicleNo      추적 중인 차량번호
  *   selectedVehicleNo     팝업이 열려 있는 차량번호
  *   trackCentering        false 면 추적 중이어도 지도를 따라 옮기지 않음
- *   myPos                 { lat, lng } 내 위치 (없으면 null)
+ *   refStop               { arsId, name } 사용자가 탭한 기준 정류장 (없으면 null)
  *   autoTrack             true 면 이 노선에서 추적할 버스를 골라 onAutoTrack 호출
  */
 export function useBusMarkers(map, route, opts = {}) {
@@ -102,14 +102,10 @@ export function useBusMarkers(map, route, opts = {}) {
     const buses = busesRef.current;
     const stops = route.stops || [];
 
-    // 정류장 경로상 위치: 순번 순(sectAlong 용) + 오름차순(leadAlong·sidx 용)
+    // 정류장의 경로상 위치. 순번 제약을 쓰는 단조 투영이라 결과가 곧 오름차순이고,
+    // sectAlong(순번 기준)·leadAlong/sidxFor(오름차순 기준) 양쪽에 그대로 쓸 수 있다.
     const nStops = stops.length;
-    const stopByOrd = stops.map(
-      (s, idx) =>
-        projectOnPath(path, s, nStops > 1 ? (path.total * (idx + 0.5)) / nStops : null)
-          .along,
-    );
-    const stopSorted = [...stopByOrd].sort((a, b) => a - b);
+    const stopAlongs = projectStopsAlong(path, stops);
 
     // 새로고침 복원: 직전 세션이 예측하던 위치·속도를 sessionStorage 에서 되살림.
     // (없으면 새 버스는 INITIAL_SPEED 로 시드 → 첫 프레임부터 지연분만큼 앞서 표시)
@@ -136,20 +132,44 @@ export function useBusMarkers(map, route, opts = {}) {
     let lastStat = 0;
     let missCount = 0;
     let autoServed = false;
-    let myPosSeen; // opts.myPos 의 직전 참조값
-    let myStop = null; // 내 위치에서 가장 가까운 이 노선의 정류장
 
-    // 사용자는 결국 정류장에서 타므로, 내 GPS 를 경로에 투영하는 것보다
-    // "내게 가장 가까운 이 노선 정류장"이 기준으로 훨씬 쓸모 있다.
-    function findMyStop(pos) {
-      if (!pos || !nStops) return null;
-      let best = null;
+    // 기준 정류장의 경로상 위치(이 노선에 없으면 null)
+    function refStopAlong(refStop) {
+      if (!refStop?.arsId) return null;
+      const i = stops.findIndex((s) => s.arsId === refStop.arsId);
+      return i < 0 ? null : stopAlongs[i];
+    }
+
+    // 기준 정류장(사용자가 탭한 정류장)까지 몇 정거장·몇 분 남았는지.
+    // 기준이 없으면 null — GPS 최근접으로 추측하지 않는다(방향이 반대인 건너편
+    // 정류장을 집어서 엉뚱한 거리가 나오던 원인).
+    function destFor(st, refStop) {
+      if (!refStop?.arsId) return null;
+      // 순환노선은 같은 정류장이 두 번 나올 수 있다 → 버스 앞쪽 첫 번째 것
+      let idx = -1;
       for (let i = 0; i < nStops; i++) {
-        const d = haversine(stops[i], pos);
-        if (!best || d < best.d) best = { d, i };
+        if (stops[i].arsId !== refStop.arsId) continue;
+        if (idx < 0) idx = i;
+        if (stopAlongs[i] >= st.along - 30) {
+          idx = i;
+          break;
+        }
       }
-      if (!best || best.d > MY_STOP_MAX_M) return null;
-      return { name: stops[best.i].name, along: stopByOrd[best.i] };
+      if (idx < 0) return { name: refStop.name, notOnRoute: true };
+
+      const name = stops[idx].name || refStop.name;
+      const gap = stopAlongs[idx] - st.along;
+      if (gap < -30) return { name, passed: true };
+      const here = gap < 30; // 사실상 그 정류장에 와 있음
+      const away = Math.max(1, sidxFor(stopAlongs, stopAlongs[idx]) - sidxFor(stopAlongs, st.along) + 1);
+      return {
+        name,
+        stopsAway: here ? 0 : away,
+        meters: Math.max(0, Math.round(gap)),
+        etaSec: Math.round(
+          Math.max(0, gap) / Math.max(st.speed, ETA_MIN_V) + (here ? 0 : away - 1) * ETA_DWELL_S,
+        ),
+      };
     }
 
     // 카드/팝업에 쓰는 정보 한 덩어리 (마커 탭 시·추적 중 1초마다 같은 형태)
@@ -157,28 +177,7 @@ export function useBusMarkers(map, route, opts = {}) {
       const b = st.gps || {};
       const next = stops.find((s) => s.ord === (b.sectOrd || 0) + 1);
       const p = pointAtDistance(path, st.along);
-      let dest = null;
-      if (myStop) {
-        const gap = myStop.along - st.along;
-        if (gap < -30) {
-          dest = { name: myStop.name, passed: true };
-        } else {
-          const away = Math.max(
-            1,
-            sidxFor(stopSorted, myStop.along) - sidxFor(stopSorted, st.along) + 1,
-          );
-          const here = gap < 30; // 사실상 내 정류장에 와 있음
-          dest = {
-            name: myStop.name,
-            stopsAway: here ? 0 : away,
-            meters: Math.max(0, Math.round(gap)),
-            etaSec: Math.round(
-              Math.max(0, gap) / Math.max(st.speed, ETA_MIN_V) +
-                (here ? 0 : away - 1) * ETA_DWELL_S,
-            ),
-          };
-        }
-      }
+      const dest = destFor(st, optRef.current.refStop);
       return {
         routeId: route.routeId,
         routeNo: route.routeNo,
@@ -211,13 +210,8 @@ export function useBusMarkers(map, route, opts = {}) {
       const o = optRef.current;
       const trackVno = o.trackedVehicleNo || null;
 
-      if (o.myPos !== myPosSeen) {
-        myPosSeen = o.myPos;
-        myStop = findMyStop(o.myPos);
-      }
-
       for (const [vno, st] of buses) {
-        const { pDes, vEst } = predict(st, nowWall, stopSorted);
+        const { pDes, vEst } = predict(st, nowWall, stopAlongs);
         const pD = clamp(pDes, 0, path.total);
 
         st.vShown += (vEst - st.vShown) * kShow;
@@ -254,9 +248,10 @@ export function useBusMarkers(map, route, opts = {}) {
       } else if (!autoServed && buses.size) {
         autoServed = true;
         let best = null;
-        if (myStop) {
+        const refAlong = refStopAlong(o.refStop);
+        if (refAlong != null) {
           for (const [vno, st] of buses) {
-            if (st.along <= myStop.along - 10 && (!best || st.along > best.along)) {
+            if (st.along <= refAlong - 10 && (!best || st.along > best.along)) {
               best = { vno, along: st.along };
             }
           }
@@ -319,7 +314,7 @@ export function useBusMarkers(map, route, opts = {}) {
         seen.add(b.vehicleNo);
         const st = buses.get(b.vehicleNo);
 
-        const aSect = sectAlong(b, stopByOrd); // sectOrd + 구간진행률 기반 위치
+        const aSect = sectAlong(b, stopAlongs); // sectOrd + 구간진행률 기반 위치
         let hint = st ? st.refAlong : aSect;
         if (hint == null && Number.isFinite(b.sectOrd) && nStops > 1) {
           hint = path.total * clamp(b.sectOrd / nStops, 0, 1);
@@ -338,12 +333,12 @@ export function useBusMarkers(map, route, opts = {}) {
         // 정류장 도착 상태면 그 정류장 위치로 스냅. 사용자가 정확도를 가장 원하는 순간이라
         // GPS 노이즈 대신 "정류장에 서 있다"는 API 의 사실을 그대로 쓴다.
         if (b.stopFlag === 1) {
-          const at = stopByOrd[b.sectOrd];
+          const at = stopAlongs[b.sectOrd];
           if (Number.isFinite(at) && Math.abs(at - a0) < ARRIVE_SNAP_M) a0 = at;
         }
 
         const fixWall = nowWall - fixLagMs(b.dataTm); // 이 실측의 시각(추정)
-        const sidx = sidxFor(stopSorted, a0);
+        const sidx = sidxFor(stopAlongs, a0);
 
         if (!st) {
           // 실측 속도가 아직 없으므로: 복원값 있으면 그걸로, 없으면 도시버스 평균 시드.

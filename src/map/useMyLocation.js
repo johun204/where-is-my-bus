@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from 'react';
-import { haversine } from './busPath';
 import { createMyLocation } from './myLocation';
 
 /**
@@ -9,11 +8,9 @@ import { createMyLocation } from './myLocation';
  * onHeading(deg): 추적 모드에서 나침반 방위가 갱신될 때마다 호출(지도 방향 회전용).
  * noInitCenter: 첫 위치를 받았을 때 지도를 내 위치로 옮기지 않음
  *               (앱을 다시 켰을 때 이전에 추적하던 버스를 보여주는 중이면 뺏으면 안 됨).
- * 반환 pos: 현재 위치 { lat, lng } — 버스와 나 사이 거리·정류장 계산에 쓴다.
  */
 export function useMyLocation(map, onHeading, noInitCenter = false) {
   const [follow, setFollow] = useState(false);
-  const [pos, setPos] = useState(null);
   const fabRef = useRef(() => {});
   const exitRef = useRef(() => {});
   const noInitRef = useRef(noInitCenter);
@@ -92,18 +89,10 @@ export function useMyLocation(map, onHeading, noInitCenter = false) {
     }
     exitRef.current = () => exitFollow(true);
 
-    let lastPos = null;
     function onPos(p) {
-      const next = { lat: p.coords.latitude, lng: p.coords.longitude };
-      lastLL = new kakao.maps.LatLng(next.lat, next.lng);
+      lastLL = new kakao.maps.LatLng(p.coords.latitude, p.coords.longitude);
       if (!overlay) overlay = createMyLocation(map, lastLL);
       else overlay.setPosition(lastLL);
-
-      // 5m 이상 움직였을 때만 state 갱신 (GPS 지터로 매초 리렌더 방지)
-      if (!lastPos || haversine(lastPos, next) > 5) {
-        lastPos = next;
-        setPos(next);
-      }
 
       if (!didInitCenter) {
         didInitCenter = true;
@@ -159,7 +148,6 @@ export function useMyLocation(map, onHeading, noInitCenter = false) {
 
   return {
     follow,
-    pos,
     onFab: () => fabRef.current(),
     exitFollow: () => exitRef.current(),
   };

@@ -11,25 +11,30 @@ const FALLBACK = { lat: 37.5665, lng: 126.978 }; // 서울시청 (위치 권한 
 // 추적 중이던 버스를 앱을 껐다 켜도 이어서 본다. 마지막 좌표도 같이 저장해 두면
 // API 응답이 오기 전에도 지도를 그 자리에 먼저 띄울 수 있다.
 const TRACK_KEY = 'busmap.track.v1';
-const TRACK_TTL_MS = 6 * 60 * 60 * 1000; // 이보다 오래된 추적은 무의미(그 버스는 이미 차고지)
+const REF_KEY = 'busmap.refstop.v1'; // 기준 정류장 — "몇 정거장 전" 의 기준
+const KEEP_TTL_MS = 6 * 60 * 60 * 1000; // 이보다 오래되면 무의미(그 버스는 이미 차고지)
 const SAVE_MIN_MS = 5000; // 좌표 저장 최소 간격
 
-function loadTrack() {
+function loadKept(key) {
   try {
-    const v = JSON.parse(localStorage.getItem(TRACK_KEY));
-    return v && v.routeId && v.vehicleNo && Date.now() - v.t < TRACK_TTL_MS ? v : null;
+    const v = JSON.parse(localStorage.getItem(key));
+    return v && Date.now() - v.t < KEEP_TTL_MS ? v : null;
   } catch {
     return null;
   }
 }
-function saveTrack(t) {
+function keep(key, v) {
   try {
-    if (t) localStorage.setItem(TRACK_KEY, JSON.stringify({ ...t, t: Date.now() }));
-    else localStorage.removeItem(TRACK_KEY);
+    if (v) localStorage.setItem(key, JSON.stringify({ ...v, t: Date.now() }));
+    else localStorage.removeItem(key);
   } catch {
     /* 사파리 사생활 모드 등 — 저장 못 해도 동작에는 지장 없음 */
   }
 }
+const loadTrack = () => {
+  const v = loadKept(TRACK_KEY);
+  return v && v.routeId && v.vehicleNo ? v : null;
+};
 
 const CONGESTION = { 3: '여유', 4: '보통', 5: '혼잡', 6: '매우 혼잡' };
 
@@ -75,6 +80,8 @@ export default function App() {
   const [trackStat, setTrackStat] = useState(null); // 추적 중 1초마다 오는 최신 정보
   const [centering, setCentering] = useState(true); // 지도를 버스에 붙여 따라갈지
   const [autoRouteId, setAutoRouteId] = useState(null); // 칩 탭 → 가장 가까운 버스 물색 중
+  // "몇 정거장 전" 의 기준이 되는 정류장. 정류장을 탭할 때만 정해진다(현위치로 추측하지 않음).
+  const [refStop, setRefStop] = useState(() => loadKept(REF_KEY));
 
   const initTrackRef = useRef(tracked); // 마운트 시점의 복원값(지도 초기 중심용)
   const lastSaveRef = useRef(0);
@@ -98,7 +105,7 @@ export default function App() {
   // 추적 모드: 바라보는 방향이 항상 지도 12시가 되도록 지도를 -heading 만큼 회전
   const onHeading = useCallback((deg) => applyRot(-deg, 'follow'), [applyRot]);
 
-  const { follow, pos: myPos, onFab, exitFollow } = useMyLocation(
+  const { follow, onFab, exitFollow } = useMyLocation(
     map,
     onHeading,
     Boolean(initTrackRef.current), // 복원된 버스를 보여주는 중이면 내 위치로 뺏지 않음
@@ -131,9 +138,13 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    saveTrack(tracked);
+    keep(TRACK_KEY, tracked);
     setCentering(true); // 새로 추적을 시작하면 다시 지도를 버스에 붙인다
   }, [tracked]);
+
+  useEffect(() => {
+    keep(REF_KEY, refStop);
+  }, [refStop]);
 
   useEffect(() => {
     followRef.current = follow;
@@ -187,6 +198,7 @@ export default function App() {
   const onStopClick = useCallback((s) => {
     setResults(null);
     setPopup(null);
+    setRefStop({ arsId: s.arsId, name: s.name }); // 탭한 정류장이 "몇 정거장 전" 의 기준
     setStopPop({ arsId: s.arsId, name: s.name, loading: true, error: false, arrivals: null });
   }, []);
 
@@ -213,7 +225,7 @@ export default function App() {
     const now = Date.now();
     if (now - lastSaveRef.current < SAVE_MIN_MS) return;
     lastSaveRef.current = now;
-    saveTrack({
+    keep(TRACK_KEY, {
       routeId: info.routeId,
       routeNo: info.routeNo,
       routeTp: info.routeTp,
@@ -577,6 +589,7 @@ export default function App() {
               <span className="sheet__veh">{stopPop.name || '정류장'}</span>
               {stopPop.arsId && <span className="tag">{stopPop.arsId}</span>}
             </div>
+            <p className="sheet__note">이 정류장 기준으로 버스가 몇 정거장 전인지 표시해요</p>
             {stopPop.loading && <p className="sheet__msg">도착 정보를 불러오는 중…</p>}
             {!stopPop.loading && stopPop.error && (
               <p className="sheet__msg">도착 정보를 불러올 수 없어요.</p>
@@ -632,26 +645,27 @@ export default function App() {
 
             {pending ? (
               <p className="lead lead--dim">버스 위치를 불러오는 중…</p>
+            ) : card.dest?.notOnRoute ? (
+              <p className="lead lead--dim">이 버스는 {card.dest.name} 에 서지 않아요</p>
+            ) : card.dest?.passed ? (
+              <p className="lead lead--dim">{card.dest.name} 이미 지나갔어요</p>
+            ) : card.dest?.stopsAway === 0 ? (
+              <p className="lead lead--now">
+                <b>{card.dest.name}</b> 도착 — 지금 타세요
+              </p>
             ) : card.dest ? (
-              card.dest.passed ? (
-                <p className="lead lead--dim">{card.dest.name} 이미 지나갔어요</p>
-              ) : card.dest.stopsAway === 0 ? (
-                <p className="lead lead--now">
-                  <b>{card.dest.name}</b> 도착 — 지금 타세요
-                </p>
-              ) : (
-                <p className="lead">
-                  <b>{card.dest.stopsAway}</b>정거장 전 · <b>{minText(card.dest.etaSec)}</b>
-                  <span className="lead__sub">
-                    {card.dest.name}까지 {card.dest.meters}m
-                  </span>
-                </p>
-              )
+              <p className="lead">
+                <b>{card.dest.stopsAway}</b>정거장 전 · <b>{minText(card.dest.etaSec)}</b>
+                <span className="lead__sub">
+                  {card.dest.name}까지 {card.dest.meters}m
+                  <button type="button" className="lead__clear" onClick={() => setRefStop(null)}>
+                    기준 해제
+                  </button>
+                </span>
+              </p>
             ) : (
               <p className="lead lead--dim">
-                {myPos
-                  ? '이 노선의 정류장이 근처에 없어요'
-                  : '현재 위치를 켜면 몇 정거장 남았는지 알려줘요'}
+                기다리는 정류장을 지도에서 탭하면 몇 정거장 전인지 알려줘요
               </p>
             )}
 
@@ -710,7 +724,7 @@ export default function App() {
                 onAutoTrack: startTrack,
                 onTrackStat,
                 onTrackLost,
-                myPos,
+                refStop,
                 trackCentering: centering,
                 trackedVehicleNo:
                   tracked && tracked.routeId === r.routeId ? tracked.vehicleNo : null,

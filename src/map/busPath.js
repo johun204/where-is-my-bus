@@ -48,6 +48,54 @@ export function projectOnPath({ pts, cum }, target, hintAlong = null) {
   return scan(-Infinity, Infinity); // 힌트 없음 / 창 안에 마땅한 구간 없음 → 전체 탐색
 }
 
+const STOP_ACCEPT_M = 60; // 정류장이 이 안에 들어온 구간이면 '그 정류장의 구간'으로 채택
+
+/**
+ * 노선의 정류장들(순번 오름차순)을 한꺼번에 경로에 투영 → 정류장별 경로상 위치(m) 배열.
+ *
+ * 규칙은 하나: **앞 정류장 이후 구간에서 처음으로 가까워지는 지점**을 택한다.
+ * 왕복이 같은 도로를 공유하면 가는 차선/오는 차선이 수십 m 차이라 순수 최근접으로는
+ * 구분이 안 된다. 순번을 제약으로 쓰면 반환점을 지난 뒤에야 오는 차선이 후보가 되므로
+ * 자연스럽게 갈라진다.
+ *
+ * (정류장 간격이 균등하다고 가정한 힌트로 하나씩 투영하던 이전 방식은, 간격이 들쭉날쭉한
+ *  노선에서 힌트 창을 빗나가 전체 탐색으로 떨어지고 반대방향 구간에 붙어 along 이 수 km
+ *  튀었다 — "22정거장 전 8794m" 버그의 원인.)
+ *
+ * 결과는 항상 비내림차순이라 leadAlong/sidxFor 에 그대로 쓸 수 있다.
+ */
+export function projectStopsAlong({ pts, cum }, stops) {
+  const out = [];
+  let from = 0;
+  for (const s of stops) {
+    let best = { dist: Infinity, along: from };
+    let run = null; // 허용오차 안에 들어온 첫 구간의 최소점
+    for (let i = 0; i < pts.length - 1; i++) {
+      if (cum[i + 1] <= from) continue; // 앞 정류장보다 뒤 — 통째로 건너뜀
+      const segLen = cum[i + 1] - cum[i] || 1;
+      // 구간 내부에서도 from 이전으로는 못 감 (긴 구간 하나가 왕복을 다 덮는 경우 대비)
+      const tMin = Math.max(0, (from - cum[i]) / segLen);
+      const { t, p } = closestOnSeg(pts[i], pts[i + 1], s, tMin);
+      const d = haversine(p, s);
+      const along = cum[i] + t * segLen;
+      if (d < best.dist) best = { dist: d, along };
+      if (d < STOP_ACCEPT_M) {
+        // 근접 구간의 '첫 최소점'을 택한다. 반환점 근처처럼 가는/오는 차선이 모두
+        // 허용오차 안에 있는 곳에서 더 가까운 반대 차선으로 넘어가지 않게 하려면,
+        // 최소를 지나 다시 멀어지는 순간 확정해야 한다.
+        if (!run || d < run.dist) run = { dist: d, along };
+        else break;
+      } else if (run) {
+        break; // 근접 구간을 통째로 벗어남 → 그 구간의 최소점이 이 정류장
+      }
+    }
+    const pick = run || best;
+    out.push(pick.along);
+    from = Math.max(from, pick.along);
+  }
+  return out;
+}
+
 /** 경로상 누적거리 along(m) → { lat, lng, heading(도) } */
 export function pointAtDistance({ pts, cum, total }, along) {
   along = Math.max(0, Math.min(total, along));
@@ -113,7 +161,7 @@ export function sidxFor(stopAlongs, along) {
 }
 
 // --- 내부 ---
-function closestOnSeg(a, b, p) {
+function closestOnSeg(a, b, p, tMin = 0) {
   // 짧은 구간이라 위도 보정한 평면 근사로 충분
   const kx = Math.cos(rad((a.lat + b.lat) / 2));
   const ax = a.lng * kx;
@@ -126,7 +174,7 @@ function closestOnSeg(a, b, p) {
   const dy = by - ay;
   const len2 = dx * dx + dy * dy || 1e-12;
   let t = ((px - ax) * dx + (py - ay) * dy) / len2;
-  t = Math.max(0, Math.min(1, t));
+  t = Math.max(tMin, Math.min(1, t));
   return { t, p: { lat: ay + dy * t, lng: (ax + dx * t) / kx } };
 }
 
