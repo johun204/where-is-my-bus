@@ -1,6 +1,6 @@
 // catchBus.js 자체 검증 — node src/map/catchBus.test.mjs
 import assert from 'node:assert';
-import { WALK_DEFAULT_V, WALK_DETOUR, catchProb, walkSeconds } from './catchBus.js';
+import { WALK_DEFAULT_V, WALK_DETOUR, catchProb, etaBadge, walkSeconds } from './catchBus.js';
 
 // 직선 100m 를 평균 보폭으로 → 우회 보정만큼 직선보다 오래 걸린다
 {
@@ -36,5 +36,16 @@ assert.ok(catchProb(60, 300) < 0.01, '이미 늦음 → 거의 불가');
 
 assert.strictEqual(catchProb(null, 100), null);
 assert.strictEqual(catchProb(100, null), null);
+
+// etaBadge: 도보시간을 모르면 도착 예정만, 알면 확률까지
+assert.strictEqual(etaBadge(20, null), '곧 도착');
+assert.strictEqual(etaBadge(200, null), '3분 후');
+assert.strictEqual(etaBadge(50, null), '1분 후', '45~90초는 1분으로 올림 아닌 최소 1분');
+assert.strictEqual(etaBadge(300, 240), '5분 후 · 탈 확률 79%');
+// 추정치이므로 0%/100% 로 단정하지 않는다
+assert.strictEqual(etaBadge(3000, 60), '50분 후 · 탈 확률 99%');
+assert.ok(etaBadge(60, 3000).endsWith('탈 확률 1%'), etaBadge(60, 3000));
+assert.strictEqual(etaBadge(null, 60), null);
+assert.strictEqual(etaBadge(-1, 60), null);
 
 console.log('catchBus.js OK');

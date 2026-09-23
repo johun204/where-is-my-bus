@@ -25,3 +25,17 @@ export function catchProb(busSec, walkSec) {
   if (!Number.isFinite(busSec) || !Number.isFinite(walkSec)) return null;
   return 1 / (1 + Math.exp(-(busSec - walkSec) / CATCH_SIGMA));
 }
+
+/**
+ * 지도 마커 옆에 붙이는 "3분 후 · 탈 확률 82%" 한 줄.
+ * walkSec 를 모르면(위치 꺼짐 등) 도착 예정만 보여준다.
+ */
+export function etaBadge(etaSec, walkSec) {
+  if (!Number.isFinite(etaSec) || etaSec < 0) return null;
+  const when = etaSec < 45 ? '곧 도착' : `${Math.max(1, Math.round(etaSec / 60))}분 후`;
+  const p = catchProb(etaSec, walkSec);
+  if (p == null) return when;
+  // 추정치일 뿐이라 0%/100% 로 단정하지 않는다
+  const pct = Math.min(99, Math.max(1, Math.round(p * 100)));
+  return `${when} · 탈 확률 ${pct}%`;
+}

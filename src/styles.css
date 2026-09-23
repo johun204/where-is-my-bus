@@ -170,7 +170,7 @@ button { font-family: inherit; }
 .results li.is-added .mark { color: #b0b5bd; }
 .results .empty { justify-content: center; color: #9aa0a8; cursor: default; }
 
-/* 노선 칩 — 탭하면 그 노선에서 나에게 오는 버스를 바로 추적 */
+/* 노선 칩 — 탭하면 그 노선을 지도에서 껐다 켠다 */
 .faves {
   display: flex;
   gap: 7px;
@@ -191,7 +191,8 @@ button { font-family: inherit; }
   overflow: hidden;
   box-shadow: 0 2px 8px rgba(16, 24, 40, 0.14);
 }
-.chip--on { background: var(--chip, #3d5bab); border-color: var(--chip, #3d5bab); }
+.chip--off { opacity: 0.5; border-color: #c2c2c2; }
+.chip--off .chip__no { text-decoration: line-through; }
 .chip__no {
   position: relative;
   border: 0;
@@ -200,17 +201,6 @@ button { font-family: inherit; }
   color: var(--ink);
   padding: 8px 10px 8px 14px;
 }
-.chip--on .chip__no { color: #fff; }
-.chip__dot {
-  display: inline-block;
-  width: 6px;
-  height: 6px;
-  margin-left: 5px;
-  border-radius: 50%;
-  background: var(--accent);
-  animation: pulse 0.9s ease-in-out infinite;
-}
-.chip--on .chip__dot { background: #fff; }
 .chip__x {
   border: 0;
   background: rgba(0, 0, 0, 0.07);
@@ -218,12 +208,6 @@ button { font-family: inherit; }
   padding: 0 11px;
   font-size: 16px;
   line-height: 1;
-}
-.chip--on .chip__x { background: rgba(255, 255, 255, 0.24); color: #fff; }
-
-@keyframes pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.25; }
 }
 
 /* ── 하단: 알림 + FAB + 정보 카드 (엄지 영역) ─────────────── */
@@ -288,6 +272,9 @@ button { font-family: inherit; }
 .sheet--live { box-shadow: 0 0 0 2px var(--accent), var(--shadow); }
 .sheet--walk { padding-bottom: 12px; }
 .sheet--walk .walk { margin-bottom: 0; }
+.sheet__open { cursor: pointer; }
+.sheet__open:active { opacity: 0.6; }
+.sheet--walk .walk__how { margin: 0; }
 .sheet--hint {
   display: flex;
   flex-direction: column;
@@ -580,6 +567,21 @@ button { font-family: inherit; }
   white-space: nowrap;
 }
 .bus-ovl--active .bus-ovl__no { background: var(--accent); }
+/* 기준 정류장 도착예정 배지 — 아이콘 아래, 지도가 돌아도 수평 유지 */
+.bus-ovl__eta {
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%) rotate(calc(-1 * var(--map-rot, 0deg)));
+  margin-top: 3px;
+  padding: 2px 7px;
+  font: 800 11px/1.25 system-ui, sans-serif;
+  color: #fff;
+  background: var(--accent);
+  border-radius: 8px;
+  white-space: nowrap;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
+}
 .bus-ovl__icon {
   width: 100%;
   height: 100%;

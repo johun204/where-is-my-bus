@@ -19,6 +19,7 @@ const innerTransform = (k) => `translate(-50%, -50%) scale(${k})`;
  *  setHeading(deg)      진행방향으로 아이콘만 회전 (멈춰 있어도 항상 표시)
  *  setScale(k)          지도 축척에 맞춰 아이콘·번호 함께 확대축소
  *  setActive(on)        추적/선택 중 강조(맥동 링)
+ *  setBadge(text)       아이콘 아래 도착예정 배지("3분 후 · 탈 확률 82%"). null 이면 숨김
  */
 export function createBusOverlay(map, latlng, color, routeNo, scale = 1, onClick) {
   const { kakao } = window;
@@ -46,7 +47,11 @@ export function createBusOverlay(map, latlng, color, routeNo, scale = 1, onClick
   icon.className = 'bus-ovl__icon';
   icon.innerHTML = busSvg(color);
 
-  inner.append(label, icon);
+  const badge = document.createElement('div');
+  badge.className = 'bus-ovl__eta';
+  badge.style.display = 'none';
+
+  inner.append(label, icon, badge);
   anchor.append(inner);
 
   const overlay = new kakao.maps.CustomOverlay({
@@ -65,6 +70,11 @@ export function createBusOverlay(map, latlng, color, routeNo, scale = 1, onClick
     },
     setScale: (k) => {
       inner.style.transform = innerTransform(k);
+    },
+    setBadge: (text) => {
+      if (badge.textContent === (text || '')) return;
+      badge.textContent = text || '';
+      badge.style.display = text ? '' : 'none';
     },
     setActive: (on) => {
       inner.classList.toggle('bus-ovl--active', !!on);

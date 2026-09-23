@@ -2,12 +2,12 @@ import { useEffect, useRef } from 'react';
 import { createBusOverlay } from './busOverlay';
 import {
   buildPath,
-  haversine,
   pointAtDistance,
   projectOnPath,
   projectStopsAlong,
   sidxFor,
 } from './busPath';
+import { etaBadge } from './catchBus';
 import { V_STOP, predict } from './predict';
 import { routeTypeColor } from './routeColor';
 
@@ -79,14 +79,14 @@ function sectAlong(b, stopAlongs) {
  *
  * opts:
  *   onBusClick(info)      마커 탭
- *   onAutoTrack(info)     autoTrack 요청에 대한 응답(추적할 차량을 골라서 알려줌)
  *   onTrackStat(info)     추적 중 1초마다 최신 정보
  *   onTrackLost()         추적 차량이 응답에서 사라짐(운행 종료)
  *   trackedVehicleNo      추적 중인 차량번호
  *   selectedVehicleNo     팝업이 열려 있는 차량번호
  *   trackCentering        false 면 추적 중이어도 지도를 따라 옮기지 않음
  *   refStop               { arsId, name } 사용자가 탭한 기준 정류장 (없으면 null)
- *   autoTrack             true 면 이 노선에서 추적할 버스를 골라 onAutoTrack 호출
+ *   etaStop               { arsId } 이 정류장 도착예정 배지를 붙일 기준 (없으면 배지 없음)
+ *   walkSec               내가 그 정류장까지 걸어가는 데 걸리는 초 — 승차확률 계산용
  */
 export function useBusMarkers(map, route, opts = {}) {
   const busesRef = useRef(new Map());
@@ -131,13 +131,36 @@ export function useBusMarkers(map, route, opts = {}) {
     let lastTrackCenter = 0;
     let lastStat = 0;
     let missCount = 0;
-    let autoServed = false;
 
     // 기준 정류장의 경로상 위치(이 노선에 없으면 null)
     function refStopAlong(refStop) {
       if (!refStop?.arsId) return null;
       const i = stops.findIndex((s) => s.arsId === refStop.arsId);
       return i < 0 ? null : stopAlongs[i];
+    }
+
+    /**
+     * etaStop 이 주어지면(= 그 정류장 경유 노선만 보기 ON), 그 정류장에 **아직 도착하지 않은**
+     * 버스 중 가장 가까운 1대에만 "3분 후 · 탈 확률 82%" 배지를 붙인다.
+     * 여러 대에 붙이면 정작 탈 버스가 묻히므로 딱 하나만.
+     */
+    function applyEtaBadge(o) {
+      let badged = null;
+      const at = refStopAlong(o.etaStop);
+      if (at != null) {
+        let best = null;
+        for (const [vno, st] of buses) {
+          // 정류장을 이미 지난 버스는 제외(-20m 는 도착 직전까지 포함하는 여유)
+          if (st.along <= at - 20 && (!best || st.along > best.st.along)) best = { vno, st };
+        }
+        const d = best && destFor(best.st, o.etaStop);
+        const text = d && !d.passed && !d.notOnRoute ? etaBadge(d.etaSec, o.walkSec) : null;
+        if (text) {
+          best.st.overlay.setBadge(text);
+          badged = best.vno;
+        }
+      }
+      for (const [vno, st] of buses) if (vno !== badged) st.overlay.setBadge(null);
     }
 
     // 기준 정류장(사용자가 탭한 정류장)까지 몇 정거장·몇 분 남았는지.
@@ -251,35 +274,13 @@ export function useBusMarkers(map, route, opts = {}) {
         }
       }
 
-      // 노선 칩 탭 → 내 정류장으로 오고 있는(아직 안 지난) 가장 가까운 버스를 고른다
-      if (!o.autoTrack) {
-        autoServed = false;
-      } else if (!autoServed && buses.size) {
-        autoServed = true;
-        let best = null;
-        const refAlong = refStopAlong(o.refStop);
-        if (refAlong != null) {
-          for (const [vno, st] of buses) {
-            if (st.along <= refAlong - 10 && (!best || st.along > best.along)) {
-              best = { vno, along: st.along };
-            }
-          }
-        }
-        if (!best) {
-          const c = map.getCenter();
-          const cp = { lat: c.getLat(), lng: c.getLng() };
-          for (const [vno, st] of buses) {
-            const d = haversine(pointAtDistance(path, st.along), cp);
-            if (!best || d < best.d) best = { vno, d };
-          }
-        }
-        if (best) o.onAutoTrack?.(infoFor(best.vno, buses.get(best.vno)));
-      }
-
-      if (trackVno && now - lastStat > STAT_MS) {
+      if (now - lastStat > STAT_MS) {
         lastStat = now;
-        const st = buses.get(trackVno);
-        if (st) o.onTrackStat?.(infoFor(trackVno, st));
+        if (trackVno) {
+          const st = buses.get(trackVno);
+          if (st) o.onTrackStat?.(infoFor(trackVno, st));
+        }
+        applyEtaBadge(o);
       }
 
       raf = requestAnimationFrame(frame);

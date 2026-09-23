@@ -5,9 +5,7 @@ const KEY = 'busmap.favorites.v1';
 function load() {
   try {
     const v = JSON.parse(localStorage.getItem(KEY));
-    // enabled(지도 표시 on/off) 는 폐지 — 칩 탭은 이제 '그 노선 버스 추적'.
-    // 예전 데이터에 enabled:false 가 남아 있으면 영영 안 보이므로 털어낸다.
-    return Array.isArray(v) ? v.map(({ enabled, ...r }) => r) : [];
+    return Array.isArray(v) ? v : [];
   } catch {
     return []; // 손상된 값은 무시하고 초기화
   }
@@ -47,9 +45,16 @@ export function useFavoriteRoutes() {
     );
   }, []);
 
+  // 칩 탭 = 지도에서 껐다 켜기. enabled 가 없으면 켜진 것으로 본다.
+  const toggleEnabled = useCallback((routeId) => {
+    setFavorites((prev) =>
+      prev.map((r) => (r.routeId === routeId ? { ...r, enabled: r.enabled === false } : r)),
+    );
+  }, []);
+
   const remove = useCallback((routeId) => {
     setFavorites((prev) => prev.filter((r) => r.routeId !== routeId));
   }, []);
 
-  return { favorites, has, toggle, remove };
+  return { favorites, has, toggle, toggleEnabled, remove };
 }
